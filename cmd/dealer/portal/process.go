@@ -29,7 +29,7 @@ import (
 
 func NewProcPortal(logger nuclio.Logger, manager *app.JobManager) (*ProcPortal, error) {
 	newProcPortal := ProcPortal{logger:logger, jobManager:manager}
-	return newProcPortal, nil
+	return &newProcPortal, nil
 }
 
 type ProcPortal struct {

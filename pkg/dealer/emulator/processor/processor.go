@@ -23,10 +23,12 @@ import (
 	"fmt"
 	"net/http"
 	"github.com/nuclio/nuclio/pkg/dealer/jobs"
+	"time"
 )
 
 func NewProcessEmulator(logger nuclio.Logger, proc *Process) (ProcessEmulator, error) {
 	newEmulator := ProcessEmulator{logger:logger, proc:proc}
+	newEmulator.proc.tasks = make(map[int]*jobs.Task)
 	return newEmulator, nil
 }
 
@@ -44,14 +46,14 @@ type Process struct {
 	Alias         string                `json:"alias,omitempty"`
 	IP            string                `json:"ip"`
 	Port          int                   `json:"port"`
-	removingJob   bool
 	Metrics       map[string]int        `json:"metrics,omitempty"`
+	State         jobs.ProcessState          `json:"state"`
+	LastUpdate    time.Time             `json:"lastUpdate,omitempty"`
 	tasks         map[int]*jobs.Task
 }
 
 type ProcessUpdate struct {
 	*Process
-	//State         ProcessState          `json:"state"`
 	Tasks         []jobs.Task
 }
 
@@ -86,12 +88,13 @@ func (p *ProcessEmulator) Start() error {
 
 func (p *ProcessEmulator) update(w http.ResponseWriter, r *http.Request) {
 	data := &ProcessUpdate{}
+
 	if err := render.Bind(r, data); err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
 		return
 	}
 
-	p.logger.InfoWith("Update","process",ProcessUpdate{})
+	p.logger.InfoWith("Update","process",data)
 	msg, err := p.emulateProcess(data)
 
 	if err != nil {
@@ -99,6 +102,7 @@ func (p *ProcessEmulator) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	p.logger.InfoWith("Send update resp","process",msg)
 	if err := render.Render(w, r, msg); err != nil {
 		render.Render(w, r, ErrRender(err))
 		return

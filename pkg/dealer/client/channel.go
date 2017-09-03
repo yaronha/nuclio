@@ -44,11 +44,14 @@ type AsyncClient struct {
 	InChannel  chan *ChanRequest
 }
 
-func (a *AsyncClient) Start() {
+func (a *AsyncClient) Start() error {
 
+	// TODO: start multiple go routines
 	go func() {
 		for {
 			request, ok := <-a.InChannel
+
+			fmt.Printf("async:%s\n", request.Body)
 
 			if !ok { break }
 
@@ -58,10 +61,15 @@ func (a *AsyncClient) Start() {
 				a.logger.Error("Failed to send: %s", err)
 				fmt.Printf("Failed to send: %s", err)
 			}
+
+			fmt.Printf("resp:%s\n", resp.Body())
+
 			request.ReturnChan <- resp
 
 		}
 	}()
+
+	return nil
 }
 
 func (a *AsyncClient) Submit(request *ChanRequest) {

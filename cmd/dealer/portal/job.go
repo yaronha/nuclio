@@ -29,7 +29,7 @@ import (
 
 func NewJobsPortal(logger nuclio.Logger, manager *app.JobManager) (*JobsPortal, error) {
 	newJobsPortal := JobsPortal{logger:logger, jobManager:manager}
-	return newJobsPortal, nil
+	return &newJobsPortal, nil
 }
 
 type JobsPortal struct {

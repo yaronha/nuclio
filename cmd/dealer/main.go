@@ -86,12 +86,12 @@ func createLogger(verbose bool) (nuclio.Logger, error) {
 
 func Tests(jm *app.JobManager) {
 	jm.AddJob(&jobs.Job{Name:"myjob",FunctionURI:"f1",ExpectedProc:3, TotalTasks:11})
-	jm.AddProcess(&jobs.Process{Name:"p1",Function:"f1",Version:"latest"})
-	fmt.Println(jm.Jobs["myjob.default"].AsString())
-	jm.AddProcess(&jobs.Process{Name:"p2",Function:"f1",Version:"latest"})
-	fmt.Println(jm.Jobs["myjob.default"].AsString())
-	jm.Jobs["myjob.default"].UpdateNumProcesses(2,true)
-	fmt.Println(jm.Jobs["myjob.default"].AsString())
+	//jm.AddProcess(&jobs.Process{Name:"p1",Function:"f1",Version:"latest", IP:"192.168.1.133", Port:5000})
+	//fmt.Println(jm.Jobs["myjob.default"].AsString())
+	//jm.AddProcess(&jobs.Process{Name:"p2",Function:"f1",Version:"latest"})
+	//fmt.Println(jm.Jobs["myjob.default"].AsString())
+	//jm.Jobs["myjob.default"].UpdateNumProcesses(2,true)
+	//fmt.Println(jm.Jobs["myjob.default"].AsString())
 
 }
 

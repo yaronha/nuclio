@@ -22,7 +22,7 @@ import (
 	"github.com/nuclio/nuclio/pkg/dealer/client"
 )
 
-type ProcessUpdateMessage struct {
+type ProcessUpdateMessage2 struct {
 	Name          string
 	Namespace     string
 	IP            string
@@ -34,7 +34,7 @@ type ProcessUpdateMessage struct {
 }
 
 
-func (p *ProcessUpdateMessage) Render(w http.ResponseWriter, r *http.Request) error {
+func (p *ProcessUpdateMessage2) Render(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
@@ -48,7 +48,8 @@ type ProcessUpdateResp struct {
 }
 
 type ManagerContext struct {
-	OutChannel    chan *client.ChanRequest
-	InChannel     chan *client.Response
+	OutChannel       chan *client.ChanRequest
+	ProcRespChannel  chan *client.Response
+	Client           *client.AsyncClient
 }
 

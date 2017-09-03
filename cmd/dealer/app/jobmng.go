@@ -39,8 +39,8 @@ func NewJobManager(config string, logger nuclio.Logger) (*JobManager, error) {
 		return &newManager, err
 	}
 
-	inChannel := make(chan *client.Response, 100)
-	newManager.ctx = jobs.ManagerContext{OutChannel:newManager.asyncClient.InChannel, InChannel: inChannel}
+	procRespChannel := make(chan *client.Response, 100)
+	newManager.ctx = jobs.ManagerContext{ ProcRespChannel: procRespChannel, Client:newManager.asyncClient}
 
 	newManager.logger = logger
 	return &newManager, nil
@@ -57,6 +57,22 @@ type JobManager struct {
 }
 
 func (jm *JobManager) Start() error {
+
+	err := jm.asyncClient.Start()
+	if err != nil {
+		return errors.Wrap(err, "Failed to start job manager - async client")
+	}
+
+	go func() {
+		for {
+			resp, ok := <-jm.ctx.ProcRespChannel
+
+			if !ok { break }
+			fmt.Printf("got response: %s\n", resp.Body() )
+
+		}
+	}()
+
 	return nil
 }
 

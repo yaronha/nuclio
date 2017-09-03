@@ -21,6 +21,9 @@ import (
 	"fmt"
 	"github.com/pkg/errors"
 	"github.com/nuclio/nuclio-sdk"
+	"github.com/nuclio/nuclio/pkg/dealer/client"
+	"net/http"
+	"github.com/yaronha/kubetest/xendor/k8s.io/client-go/pkg/util/json"
 )
 
 type ProcessState int8
@@ -33,9 +36,7 @@ const (
 )
 
 
-type Process struct {
-	logger        nuclio.Logger
-	ctx           *ManagerContext
+type BaseProcess struct {
 	Name          string                `json:"name"`
 	Namespace     string                `json:"namespace"`
 	Function      string                `json:"function"`
@@ -43,13 +44,51 @@ type Process struct {
 	Alias         string                `json:"alias,omitempty"`
 	IP            string                `json:"ip"`
 	Port          int                   `json:"port"`
-	removingJob   bool
 	Metrics       map[string]int        `json:"metrics,omitempty"`
 	State         ProcessState          `json:"state"`
 	LastUpdate    time.Time             `json:"lastUpdate,omitempty"`
+}
+
+type Process struct {
+	Name          string                `json:"name"`
+	Namespace     string                `json:"namespace"`
+	Function      string                `json:"function"`
+	Version       string                `json:"version,omitempty"`
+	Alias         string                `json:"alias,omitempty"`
+	IP            string                `json:"ip"`
+	Port          int                   `json:"port"`
+	Metrics       map[string]int        `json:"metrics,omitempty"`
+	State         ProcessState          `json:"state"`
+	LastUpdate    time.Time             `json:"lastUpdate,omitempty"`
+
+	//BaseProcess
+	logger        nuclio.Logger
+	ctx           *ManagerContext
+	removingJob   bool
 	job           *Job
 	tasks         []*Task
 }
+
+type ProcessMessage struct {
+	Name          string                `json:"name"`
+	Namespace     string                `json:"namespace"`
+	Function      string                `json:"function"`
+	Version       string                `json:"version,omitempty"`
+	Alias         string                `json:"alias,omitempty"`
+	IP            string                `json:"ip"`
+	Port          int                   `json:"port"`
+	Metrics       map[string]int        `json:"metrics,omitempty"`
+	State         ProcessState          `json:"state"`
+	LastUpdate    time.Time             `json:"lastUpdate,omitempty"`
+
+	Tasks         []Task
+}
+
+func (p *ProcessMessage) Render(w http.ResponseWriter, r *http.Request) error {
+	return nil
+}
+
+
 
 func NewProcess(logger nuclio.Logger, context *ManagerContext, proc *Process) (*Process, error) {
 	if proc.Namespace == "" {
@@ -161,18 +200,40 @@ func (p *Process) StopNTasks(toDelete int) {
 }
 
 func (p *Process) PushUpdates() error {
-	fmt.Printf("Push-updates: before - %s, after - ",p.AsString())
-	p.emulateProcess()
-	fmt.Println(p.AsString())
+	p.logger.InfoWith("Push updates to processor","processor",p.Name, "state", p.AsString())
+	if p.IP == "" {
+		return nil
+	}
+
+	message := p.GetProcessState()
+	body, err := json.Marshal(message)
+	if err !=nil {
+		return errors.Wrap(err, "Failed to Marshal process for update")
+	}
+
+	host:= fmt.Sprintf("%s:%d", p.IP, p.Port)
+	request := client.ChanRequest{
+		Method: "POST",
+		HostURL: host,
+		Url: fmt.Sprintf("http://%s/events/%s", host, p.job.Name),
+		Body: body,
+		NeedResp: false,
+		ReturnChan: p.ctx.ProcRespChannel,
+	}
+
+	p.ctx.Client.Submit(&request)
+
+	//p.emulateProcess()
+	//fmt.Println(p.AsString())
 	return nil
 }
 
-func (p *Process) HandleUpdates(msg ProcessUpdateMessage, isRequest bool) error {
+func (p *Process) HandleUpdates(msg ProcessMessage, isRequest bool) error {
 
 	p.LastUpdate = time.Now()
 
 	// Update state of currently allocated tasks
-	for _, ctask := range msg.CurrentTasks {
+	for _, ctask := range msg.Tasks {
 		taskID := ctask.Id
 		if taskID >= p.job.TotalTasks {
 			// TODO: need to be in a log, not fail processing
@@ -227,16 +288,16 @@ func (p *Process) HandleUpdates(msg ProcessUpdateMessage, isRequest bool) error 
 	return nil
 }
 
-func (p *Process) GetProcessState() *ProcessUpdateMessage  {
+func (p *Process) GetProcessState() *ProcessMessage  {
 	tasklist := []Task{}
 	for _, task := range p.tasks {
 		tasklist = append(tasklist, Task{Id:task.Id, State:task.State})
 	}
 
-	msg := ProcessUpdateMessage{}
+	msg := ProcessMessage{}
 	msg.Name = p.Name
 	msg.Namespace = p.Namespace
-	msg.CurrentTasks = tasklist
+	msg.Tasks = tasklist
 	return &msg
 }
 
@@ -251,8 +312,8 @@ func (p *Process) emulateProcess()  {
 		}
 	}
 
-	msg := ProcessUpdateMessage{}
-	msg.CurrentTasks = tasklist
+	msg := ProcessMessage{}
+	msg.Tasks = tasklist
 	p.HandleUpdates(msg, true)
 }
 
