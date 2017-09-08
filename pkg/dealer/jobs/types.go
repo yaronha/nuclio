@@ -48,8 +48,51 @@ type ProcessUpdateResp struct {
 }
 
 type ManagerContext struct {
+	RequestsChannel  chan *RequestMessage
 	OutChannel       chan *client.ChanRequest
 	ProcRespChannel  chan *client.Response
 	Client           *client.AsyncClient
 }
 
+func (mc *ManagerContext) SubmitReq(request *RequestMessage) (interface{}, error) {
+	respChan := make(chan *RespChanType)
+	request.ReturnChan = respChan
+	mc.RequestsChannel <- request
+	resp := <- respChan
+	return resp.Object, resp.Err
+	return nil, nil
+}
+
+
+
+type RequestType int
+
+const (
+	RequestTypeUnknown      RequestType = iota
+
+	RequestTypeJobGet
+	RequestTypeJobDel
+	RequestTypeJobList
+	RequestTypeJobCreate
+	RequestTypeJobUpdate
+
+	RequestTypeProcGet
+	RequestTypeProcDel
+	RequestTypeProcList
+	RequestTypeProcCreate
+	RequestTypeProcUpdate
+
+)
+
+type RespChanType struct {
+	Err error
+	Object interface{}
+}
+
+type RequestMessage struct {
+	Name string
+	Namespace string
+	Type RequestType
+	Object interface{}
+	ReturnChan chan *RespChanType
+}

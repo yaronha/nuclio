@@ -19,22 +19,19 @@ package portal
 import (
 	"net/http"
 	"github.com/go-chi/chi"
-	"github.com/nuclio/nuclio/cmd/dealer/app"
 	"fmt"
 	"github.com/nuclio/nuclio-sdk"
+	"github.com/nuclio/nuclio/pkg/dealer/jobs"
 )
 
-var JobManager *app.JobManager
-
-func NewPortal(logger nuclio.Logger, jobManager *app.JobManager, port int) (DealerPortal, error) {
-	newPortal := DealerPortal{jobManager:jobManager, port:port, logger:logger}
-	JobManager = jobManager
+func NewPortal(logger nuclio.Logger, managerCtx *jobs.ManagerContext, port int) (DealerPortal, error) {
+	newPortal := DealerPortal{managerContext:managerCtx , port:port, logger:logger}
 	return newPortal, nil
 }
 
 
 type DealerPortal struct {
-	jobManager *app.JobManager
+	managerContext *jobs.ManagerContext
 	logger     nuclio.Logger
 	port       int
 
@@ -43,8 +40,8 @@ type DealerPortal struct {
 
 func (d *DealerPortal) Start() error {
 
-	jobsPortal, _ := NewJobsPortal(d.logger, d.jobManager)
-	procPortal, _ := NewProcPortal(d.logger, d.jobManager)
+	jobsPortal, _ := NewJobsPortal(d.logger, d.managerContext)
+	procPortal, _ := NewProcPortal(d.logger, d.managerContext)
 
 	r := chi.NewRouter()
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
@@ -60,7 +57,7 @@ func (d *DealerPortal) Start() error {
 		r.Route("/{namespace}", func(r chi.Router) {
 			r.Get("/", jobsPortal.listJobs)
 			r.Route("/{jobID}", func(r chi.Router) {
-				r.Use(jobsPortal.JobCtx)
+				//r.Use(jobsPortal.JobCtx)
 				r.Get("/", jobsPortal.getJob)
 				r.Put("/", jobsPortal.updateJob)
 				r.Delete("/", jobsPortal.deleteJob)
@@ -76,7 +73,6 @@ func (d *DealerPortal) Start() error {
 		r.Route("/{namespace}", func(r chi.Router) {
 			r.Get("/", procPortal.listProcess)
 			r.Route("/{procID}", func(r chi.Router) {
-				r.Use(procPortal.ProcessCtx)
 				r.Get("/", procPortal.getProcess)
 				//r.Put("/", procPortal.updateProcess)
 				r.Delete("/", procPortal.deleteProcess)

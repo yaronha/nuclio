@@ -40,23 +40,42 @@ func NewJobManager(config string, logger nuclio.Logger) (*JobManager, error) {
 	}
 
 	procRespChannel := make(chan *client.Response, 100)
-	newManager.ctx = jobs.ManagerContext{ ProcRespChannel: procRespChannel, Client:newManager.asyncClient}
+	newManager.Ctx = jobs.ManagerContext{ ProcRespChannel: procRespChannel,
+		Client:newManager.asyncClient, //RequestsChannel:reqChan,
+	}
+
+	reqChan := make(chan *jobs.RequestMessage, 100)
+	newManager.RequestsChannel = reqChan
+
+	reqChan2 := make(chan *jobs.RequestMessage, 100)
+	newManager.Ctx.RequestsChannel = reqChan2
 
 	newManager.logger = logger
 	return &newManager, nil
 }
 
 type JobManager struct {
-	logger       nuclio.Logger
-	ctx          jobs.ManagerContext
-	verbose      bool
-	Jobs         map[string]*jobs.Job
-	Processes    map[string]*jobs.Process
-	asyncClient  *client.AsyncClient
+	logger        nuclio.Logger
+	Ctx           jobs.ManagerContext
+	RequestsChannel  chan *jobs.RequestMessage
+	verbose       bool
+	Jobs          map[string]*jobs.Job
+	Processes     map[string]*jobs.Process
+	asyncClient   *client.AsyncClient
 
 }
 
+func (jm *JobManager) SubmitReq(request *jobs.RequestMessage) (interface{}, error) {
+	respChan := make(chan *jobs.RespChanType)
+	request.ReturnChan = respChan
+	jm.Ctx.RequestsChannel <- request
+	resp := <- respChan
+	return resp.Object, resp.Err
+	return nil, nil
+}
+
 func (jm *JobManager) Start() error {
+
 
 	err := jm.asyncClient.Start()
 	if err != nil {
@@ -65,10 +84,101 @@ func (jm *JobManager) Start() error {
 
 	go func() {
 		for {
-			resp, ok := <-jm.ctx.ProcRespChannel
+			select {
+			case resp, ok := <-jm.Ctx.ProcRespChannel:
+				if !ok { break }
+				jm.logger.DebugWith("Got proc response", "body", string(resp.Body()))
+			case req := <-jm.Ctx.RequestsChannel:
+				jm.logger.DebugWith("Got chan request", "type", req.Type, "name", req.Name)
+				switch req.Type {
+				case jobs.RequestTypeJobGet:
+					job, ok := jm.Jobs[jobs.JobKey(req.Name,req.Namespace)]
+					if !ok {
+						req.ReturnChan <- &jobs.RespChanType{
+							Err: fmt.Errorf("Job %s not found", req.Name),
+							Object: job,
+						}
+					} else {
+						req.ReturnChan <- &jobs.RespChanType{Err: nil, Object: job}
+					}
 
-			if !ok { break }
-			fmt.Printf("got response: %s\n", resp.Body() )
+				case jobs.RequestTypeJobCreate:
+					job := req.Object.(*jobs.Job)
+					err := jm.AddJob(job)
+					req.ReturnChan <- &jobs.RespChanType{Err: err, Object: job}
+
+				case jobs.RequestTypeJobDel:
+					err := jm.RemoveJob(req.Name, req.Namespace)
+					req.ReturnChan <- &jobs.RespChanType{Err: err}
+
+				case jobs.RequestTypeJobList:
+					list := []*jobs.Job{}
+					for _, j := range jm.Jobs {
+						if req.Namespace == "" || req.Namespace == j.Namespace {
+							list = append(list, j)
+						}
+					}
+					req.ReturnChan <- &jobs.RespChanType{Err: nil, Object: list}
+
+				case jobs.RequestTypeJobUpdate:
+					job, ok := jm.Jobs[jobs.JobKey(req.Name,req.Namespace)]
+					if !ok {
+						req.ReturnChan <- &jobs.RespChanType{
+							Err: fmt.Errorf("Job %s not found", req.Name),
+							Object: job,
+						}
+					} else {
+						err := jm.UpdateJob(job, req.Object.(*jobs.Job))
+						req.ReturnChan <- &jobs.RespChanType{Err: err, Object: job}
+					}
+
+
+				case jobs.RequestTypeProcGet:
+					proc, ok := jm.Processes[jobs.ProcessKey(req.Name,req.Namespace)]
+					if !ok {
+						req.ReturnChan <- &jobs.RespChanType{
+							Err: fmt.Errorf("Process %s not found", req.Name),
+							Object: proc,
+						}
+					} else {
+						req.ReturnChan <- &jobs.RespChanType{Err: nil, Object: proc}
+					}
+
+				case jobs.RequestTypeProcCreate:
+					proc := req.Object.(*jobs.Process)
+					err := jm.AddProcess(proc)
+					req.ReturnChan <- &jobs.RespChanType{Err: err, Object: proc}
+
+				case jobs.RequestTypeProcDel:
+					err := jm.RemoveProcess(req.Name, req.Namespace)
+					req.ReturnChan <- &jobs.RespChanType{Err: err}
+
+				case jobs.RequestTypeProcList:
+					list := []*jobs.Process{}
+					for _, p := range jm.Processes {
+						if req.Namespace == "" || req.Namespace == p.Namespace {
+							list = append(list, p)
+						}
+					}
+					req.ReturnChan <- &jobs.RespChanType{Err: nil, Object: list}
+
+				case jobs.RequestTypeProcUpdate:
+					proc, ok := jm.Processes[jobs.ProcessKey(req.Name,req.Namespace)]
+					if !ok {
+						req.ReturnChan <- &jobs.RespChanType{
+							Err: fmt.Errorf("Process %s not found", req.Name),
+							Object: proc,
+						}
+					} else {
+						err := jm.UpdateProcess(proc, req.Object.(*jobs.Process))
+						req.ReturnChan <- &jobs.RespChanType{Err: err, Object: proc}
+					}
+
+
+				}
+			}
+
+
 
 		}
 	}()
@@ -80,7 +190,7 @@ func (jm *JobManager) AddJob(job *jobs.Job) error {
 
 	jm.logger.InfoWith("Adding new job", "job", job)
 
-	job, err := jobs.NewJob(&jm.ctx, job)
+	job, err := jobs.NewJob(&jm.Ctx, job)
 	if err != nil {
 		return errors.Wrap(err, "Failed to add job")
 	}
@@ -126,7 +236,7 @@ func (jm *JobManager) AddProcess(proc *jobs.Process) error {
 
 	jm.logger.InfoWith("Adding new process", "process", proc)
 
-	proc, err := jobs.NewProcess(jm.logger, &jm.ctx, proc)
+	proc, err := jobs.NewProcess(jm.logger, &jm.Ctx, proc)
 	if err != nil {
 		return err
 	}
@@ -162,6 +272,17 @@ func (jm *JobManager) RemoveProcess(name, namespace string) error {
 	return nil
 }
 
+func (jm *JobManager) UpdateProcess(oldProc, newProc *jobs.Process) error {
+
+	jm.logger.InfoWith("Update a process", "old", oldProc, "new", newProc)
+
+	// TODO:
+
+	return nil
+}
+
+
+
 func (jm *JobManager) findFuncJobs(proc *jobs.Process) []*jobs.Job {
 	jobs := []*jobs.Job{}
 	for _, j := range jm.Jobs {
@@ -186,9 +307,7 @@ func (jm *JobManager) findFuncProcesses(job *jobs.Job) []*jobs.Process {
 }
 
 
-
-
-// check if the Job Function URIL Match the Process/POD Function Name, Version or Alias
+// check if the Job Function URI Match the Process/POD Function Name, Version or Alias
 func IsFuncMatch(uri string, proc *jobs.Process) bool {
 	if uri == "" {
 		return false

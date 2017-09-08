@@ -32,7 +32,7 @@ type Context struct {
 
 func NewContext(parentLogger nuclio.Logger, url string) (*Context, error) {
 	newClient := &Context{
-		logger: parentLogger.GetChild("v3io").(nuclio.Logger),
+		logger: parentLogger.GetChild("client").(nuclio.Logger),
 		httpClient: &fasthttp.HostClient{
 			Addr: url,
 		},

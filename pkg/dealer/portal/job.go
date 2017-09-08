@@ -22,65 +22,67 @@ import (
 	"github.com/go-chi/chi"
 	"github.com/nuclio/nuclio/pkg/dealer/jobs"
 	"net/http"
-	"context"
 	"github.com/nuclio/nuclio-sdk"
-	"github.com/nuclio/nuclio/cmd/dealer/app"
 )
 
-func NewJobsPortal(logger nuclio.Logger, manager *app.JobManager) (*JobsPortal, error) {
-	newJobsPortal := JobsPortal{logger:logger, jobManager:manager}
+func NewJobsPortal(logger nuclio.Logger, managerCtx *jobs.ManagerContext) (*JobsPortal, error) {
+	newJobsPortal := JobsPortal{logger:logger, managerContext:managerCtx}
 	return &newJobsPortal, nil
 }
 
 type JobsPortal struct {
 	logger nuclio.Logger
-	jobManager *app.JobManager
-}
-
-
-
-func (jp *JobsPortal) JobCtx(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		namespace := chi.URLParam(r, "namespace")
-		jobID := chi.URLParam(r, "jobID")
-		job, ok := JobManager.Jobs[jobs.JobKey(jobID,namespace)]
-		if !ok {
-			http.Error(w, http.StatusText(404), 404)
-			return
-		}
-		ctx := context.WithValue(r.Context(), "job", job)
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
+	managerContext *jobs.ManagerContext
 }
 
 func (jp *JobsPortal) getJob(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	job, ok := ctx.Value("job").(*jobs.Job)
-	if !ok {
+	//ctx := r.Context()
+	namespace := chi.URLParam(r, "namespace")
+	jobID := chi.URLParam(r, "jobID")
+
+	job, err := jp.managerContext.SubmitReq(&jobs.RequestMessage{
+		Name:jobID, Namespace:namespace, Type:jobs.RequestTypeJobGet})
+
+	if err != nil  {
 		http.Error(w, http.StatusText(422), 422)
 		return
 	}
-	if err := render.Render(w, r, &JobRequest{Job:job}); err != nil {
+
+	if err := render.Render(w, r, &JobRequest{Job:job.(*jobs.Job)}); err != nil {
 		render.Render(w, r, ErrRender(err))
 		return
 	}
 }
 
 func (jp *JobsPortal) deleteJob(w http.ResponseWriter, r *http.Request) {
-	job := r.Context().Value("job").(*jobs.Job)
-	err := JobManager.RemoveJob(job.Name, job.Namespace)
+
+	namespace := chi.URLParam(r, "namespace")
+	jobID := chi.URLParam(r, "jobID")
+
+	_, err := jp.managerContext.SubmitReq(&jobs.RequestMessage{
+		Name:jobID, Namespace:namespace, Type:jobs.RequestTypeJobDel})
+
 	if err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
 		return
 	}
 
-	w.Write([]byte(fmt.Sprintf("Deleted job: %s",job.Name)))
+	w.Write([]byte(fmt.Sprintf("Deleted job: %s",jobID)))
 }
 
 func (jp *JobsPortal) listJobs(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 	list := []render.Renderer{}
-	for _, j := range JobManager.Jobs {
+
+	jobList, err := jp.managerContext.SubmitReq(&jobs.RequestMessage{ Name:"",
+		Namespace:namespace, Type:jobs.RequestTypeJobList})
+
+	if err != nil {
+		render.Render(w, r, ErrInvalidRequest(err))
+		return
+	}
+
+	for _, j := range jobList.([]*jobs.Job) {
 		if namespace == "" || namespace == j.Namespace {
 			list = append(list, &JobRequest{Job:j})
 		}
@@ -98,14 +100,22 @@ func (jp *JobsPortal) createJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	JobManager.AddJob(data.Job)
+	_, err := jp.managerContext.SubmitReq(&jobs.RequestMessage{
+		Object:data.Job, Type:jobs.RequestTypeJobCreate})
+
+	if err != nil {
+		render.Render(w, r, ErrInvalidRequest(err))
+		return
+	}
 
 	render.Status(r, http.StatusCreated)
 	render.Render(w, r, data)
 }
 
 func (jp *JobsPortal) updateJob(w http.ResponseWriter, r *http.Request) {
-	job := r.Context().Value("job").(*jobs.Job)
+
+	namespace := chi.URLParam(r, "namespace")
+	jobID := chi.URLParam(r, "jobID")
 
 	data := &JobRequest{}
 	if err := render.Bind(r, data); err != nil {
@@ -113,13 +123,15 @@ func (jp *JobsPortal) updateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := JobManager.UpdateJob(job, data.Job)
+	job, err := jp.managerContext.SubmitReq(&jobs.RequestMessage{
+		Name:jobID, Namespace:namespace, Object:data.Job, Type:jobs.RequestTypeJobUpdate})
+
 	if err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
 		return
 	}
 
-	if err := render.Render(w, r, &JobRequest{Job:job}); err != nil {
+	if err := render.Render(w, r, &JobRequest{Job:job.(*jobs.Job)}); err != nil {
 		render.Render(w, r, ErrRender(err))
 		return
 	}

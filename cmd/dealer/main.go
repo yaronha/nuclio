@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"os"
 	"github.com/nuclio/nuclio/cmd/dealer/app"
-	"github.com/nuclio/nuclio/cmd/dealer/portal"
+	"github.com/nuclio/nuclio/pkg/dealer/portal"
 	"github.com/nuclio/nuclio/pkg/dealer/jobs"
 	"github.com/nuclio/nuclio-sdk"
 	"github.com/nuclio/nuclio/pkg/zap"
@@ -48,7 +48,7 @@ func run() error {
 	Tests(dealer)
 
 	listenPort := 3000
-	portal, err := portal.NewPortal(logger, dealer, listenPort)
+	portal, err := portal.NewPortal(logger, &dealer.Ctx, listenPort)
 	if err != nil {
 		return err
 	}
