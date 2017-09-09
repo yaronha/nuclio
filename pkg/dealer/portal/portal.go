@@ -25,7 +25,10 @@ import (
 )
 
 func NewPortal(logger nuclio.Logger, managerCtx *jobs.ManagerContext, port int) (DealerPortal, error) {
-	newPortal := DealerPortal{managerContext:managerCtx , port:port, logger:logger}
+	newPortal := DealerPortal{
+		managerContext:managerCtx ,
+		port:port,
+		logger: logger.GetChild("portal").(nuclio.Logger)}
 	return newPortal, nil
 }
 
@@ -74,7 +77,7 @@ func (d *DealerPortal) Start() error {
 			r.Get("/", procPortal.listProcess)
 			r.Route("/{procID}", func(r chi.Router) {
 				r.Get("/", procPortal.getProcess)
-				//r.Put("/", procPortal.updateProcess)
+				r.Put("/", procPortal.updateProcess)
 				r.Delete("/", procPortal.deleteProcess)
 			})
 		})

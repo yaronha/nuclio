@@ -81,7 +81,9 @@ type ProcessMessage struct {
 	State         ProcessState          `json:"state"`
 	LastUpdate    time.Time             `json:"lastUpdate,omitempty"`
 
-	Tasks         []Task
+	TotalTasks    int                   `json:"totalTasks,omitempty"`
+	Metadata      interface{}           `json:"metadata,omitempty"`
+	Tasks         []Task                `json:"tasks,omitempty"`
 }
 
 func (p *ProcessMessage) Render(w http.ResponseWriter, r *http.Request) error {
@@ -200,7 +202,7 @@ func (p *Process) StopNTasks(toDelete int) {
 }
 
 func (p *Process) PushUpdates() error {
-	p.logger.InfoWith("Push updates to processor","processor",p.Name, "state", p.AsString())
+	p.logger.DebugWith("Push updates to processor","processor",p.Name, "state", p.AsString())
 	if p.IP == "" {
 		return nil
 	}
@@ -228,7 +230,7 @@ func (p *Process) PushUpdates() error {
 	return nil
 }
 
-func (p *Process) HandleUpdates(msg ProcessMessage, isRequest bool) error {
+func (p *Process) HandleUpdates(msg *ProcessMessage, isRequest bool) error {
 
 	p.LastUpdate = time.Now()
 
@@ -298,6 +300,8 @@ func (p *Process) GetProcessState() *ProcessMessage  {
 	msg.Name = p.Name
 	msg.Namespace = p.Namespace
 	msg.Tasks = tasklist
+	msg.TotalTasks = p.job.TotalTasks
+	msg.Metadata = p.job.Metadata
 	return &msg
 }
 
@@ -314,6 +318,6 @@ func (p *Process) emulateProcess()  {
 
 	msg := ProcessMessage{}
 	msg.Tasks = tasklist
-	p.HandleUpdates(msg, true)
+	p.HandleUpdates(&msg, true)
 }
 

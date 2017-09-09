@@ -47,7 +47,7 @@ func (pp *ProcPortal) getProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := render.Render(w, r, &ProcessRequest{Process:proc.(*jobs.Process)}); err != nil {
+	if err := render.Render(w, r, proc.(*jobs.ProcessMessage)); err != nil {
 		render.Render(w, r, ErrRender(err))
 		return
 	}
@@ -101,7 +101,7 @@ func (pp *ProcPortal) createProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := pp.managerContext.SubmitReq(&jobs.RequestMessage{
+	proc, err := pp.managerContext.SubmitReq(&jobs.RequestMessage{
 		Object:data.Process, Type:jobs.RequestTypeProcCreate})
 
 	if err != nil {
@@ -110,7 +110,10 @@ func (pp *ProcPortal) createProcess(w http.ResponseWriter, r *http.Request) {
 	}
 
 	render.Status(r, http.StatusCreated)
-	render.Render(w, r, data)
+	if err := render.Render(w, r, proc.(*jobs.ProcessMessage)); err != nil {
+		render.Render(w, r, ErrRender(err))
+		return
+	}
 }
 
 func (pp *ProcPortal) updateProcess(w http.ResponseWriter, r *http.Request) {
@@ -132,7 +135,7 @@ func (pp *ProcPortal) updateProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := render.Render(w, r, &ProcessRequest{Process:proc.(*jobs.Process)}); err != nil {
+	if err := render.Render(w, r, proc.(*jobs.ProcessMessage)); err != nil {
 		render.Render(w, r, ErrRender(err))
 		return
 	}

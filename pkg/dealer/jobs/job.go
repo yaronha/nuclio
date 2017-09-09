@@ -26,11 +26,14 @@ type Job struct {
 	Name               string                `json:"name"`
 	Namespace          string                `json:"namespace"`
 	FunctionURI        string                `json:"functionURI"`
+	Function           string                `json:"functionURI"`
 	Version            string                `json:"version,omitempty"`
+	Suspend            bool                  `json:"suspend,omitempty"`
 	ExpectedProc       int                   `json:"expectedProc"`
 	StartTime          time.Time             `json:"startTime,omitempty"`
 	TotalTasks         int                   `json:"totalTasks"`
 	MaxTaskAllocation  int                   `json:"maxTaskAllocation,omitempty"`
+	MinProcesses       int                   `json:"minProcesses,omitempty"`
 	MaxProcesses       int                   `json:"maxProcesses,omitempty"`
 	//Generation         int
 	Processes          map[string]*Process   `json:"processes,omitempty"`

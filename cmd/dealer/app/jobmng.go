@@ -141,13 +141,15 @@ func (jm *JobManager) Start() error {
 							Object: proc,
 						}
 					} else {
-						req.ReturnChan <- &jobs.RespChanType{Err: nil, Object: proc}
+						req.ReturnChan <- &jobs.RespChanType{
+							Err: nil, Object: proc.GetProcessState()}
 					}
 
 				case jobs.RequestTypeProcCreate:
 					proc := req.Object.(*jobs.Process)
 					err := jm.AddProcess(proc)
-					req.ReturnChan <- &jobs.RespChanType{Err: err, Object: proc}
+					req.ReturnChan <- &jobs.RespChanType{
+						Err: err, Object: proc.GetProcessState()}
 
 				case jobs.RequestTypeProcDel:
 					err := jm.RemoveProcess(req.Name, req.Namespace)
@@ -170,8 +172,9 @@ func (jm *JobManager) Start() error {
 							Object: proc,
 						}
 					} else {
-						err := jm.UpdateProcess(proc, req.Object.(*jobs.Process))
-						req.ReturnChan <- &jobs.RespChanType{Err: err, Object: proc}
+						err := jm.UpdateProcess(proc, req.Object.(*jobs.ProcessMessage))
+						req.ReturnChan <- &jobs.RespChanType{
+							Err: err, Object: proc.GetProcessState()}
 					}
 
 
@@ -272,13 +275,12 @@ func (jm *JobManager) RemoveProcess(name, namespace string) error {
 	return nil
 }
 
-func (jm *JobManager) UpdateProcess(oldProc, newProc *jobs.Process) error {
+func (jm *JobManager) UpdateProcess(oldProc *jobs.Process, newProc *jobs.ProcessMessage) error {
 
 	jm.logger.InfoWith("Update a process", "old", oldProc, "new", newProc)
 
-	// TODO:
+	return oldProc.HandleUpdates(newProc, true)
 
-	return nil
 }
 
 
