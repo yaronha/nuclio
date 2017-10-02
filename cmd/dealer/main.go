@@ -45,7 +45,7 @@ func run() error {
 		return err
 	}
 
-	Tests(dealer)
+	//Tests(dealer)
 
 	listenPort := 3000
 	portal, err := portal.NewPortal(logger, &dealer.Ctx, listenPort)

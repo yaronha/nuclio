@@ -4,6 +4,7 @@ import (
 	"github.com/nuclio/nuclio-sdk"
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 type Deployment struct {
@@ -13,13 +14,30 @@ type Deployment struct {
 	Version       string                `json:"version,omitempty"`
 	Alias         string                `json:"alias,omitempty"`
 
-	ExpectedProc  int
-	RequieredProc int
+	ExpectedProc  int                   `json:"expectedProc,omitempty"`
+	RequieredProc int                   `json:"requieredProc,omitempty"`
 	procs         map[string]*Process
 	jobs          map[string]*Job
 
 }
 
+func (d *Deployment) GetProcs() map[string]*Process {
+	return d.procs
+}
+
+func (d *Deployment) GetJobs() map[string]*Job {
+	return d.jobs
+}
+
+func (d *Deployment) SumAllocation() (alloc, required int) {
+	alloc = 0
+	required = 0
+	for _, job := range d.jobs {
+		alloc += job.ExpectedProc
+		required += job.MinProcesses
+	}
+	return
+}
 
 type DeploymentMap struct {
 	deployments map[string][]*Deployment
@@ -29,21 +47,27 @@ type DeploymentMap struct {
 
 func NewDeploymentMap(logger nuclio.Logger, context *ManagerContext) (*DeploymentMap, error) {
 	newDeploymentMap := DeploymentMap{logger:logger, ctx:context}
+	newDeploymentMap.deployments = map[string][]*Deployment{}
 	return &newDeploymentMap, nil
 }
 
-func NewDeployment(namespace, function, version string) *Deployment {
-	newDeployment := Deployment{Namespace:namespace, Function:function, Version:version}
+func NewDeployment(newDeployment *Deployment) *Deployment {
 	newDeployment.procs = map[string]*Process{}
 	newDeployment.jobs  = map[string]*Job{}
-	return &newDeployment
+	return newDeployment
 }
 
 
 func (dm *DeploymentMap) UpdateDeployment(deployment *Deployment) error {
+
+	if deployment.Namespace == "" {
+		deployment.Namespace = "default"
+	}
+	dm.logger.DebugWith("Update Deployment", "deployment", deployment)
+
 	list, ok := dm.deployments[deployment.Namespace + "." + deployment.Function]
 	if !ok {
-		newList := []*Deployment{deployment}
+		newList := []*Deployment{NewDeployment(deployment)}
 		dm.deployments[deployment.Namespace + "." + deployment.Function] = newList
 		return nil
 	}
@@ -83,6 +107,18 @@ func (dm *DeploymentMap) UpdateDeployment(deployment *Deployment) error {
 	return nil
 }
 
+func (dm *DeploymentMap) GetAllDeployments(namespace, function string) []*Deployment {
+	list := []*Deployment{}
+	for key, deps := range dm.deployments {
+		split := strings.Split(key, ".")
+		if namespace == "" || namespace == split[0] {
+			list = append(list, deps...)
+		}
+	}
+
+	return list
+}
+
 func (dm *DeploymentMap) FindDeployment(namespace, function, version string, withAliases bool) *Deployment {
 	list, ok := dm.deployments[namespace + "." + function]
 	if !ok {
@@ -119,13 +155,17 @@ func (dm *DeploymentMap) RemoveDeployment(namespace, function, version string) e
 }
 
 func (dm *DeploymentMap) UpdateProcess(proc *Process) error {
+
+	dm.logger.DebugWith("Update Process", "process", proc)
+
 	dep := dm.FindDeployment(proc.Namespace, proc.Function, proc.Version, false)
 
 	if dep == nil {
 		dm.logger.WarnWith("Deployment wasnt found in process update",
 			"namespace", proc.Namespace, "function", proc.Function, "version", proc.Version)
 
-		dep = NewDeployment(proc.Namespace, proc.Function, proc.Version)
+		dep = NewDeployment(&Deployment{
+			Namespace: proc.Namespace, Function: proc.Function, Version: proc.Version})
 		dep.procs[proc.Name] = proc
 		dm.UpdateDeployment(dep)
 
@@ -151,6 +191,8 @@ func (dm *DeploymentMap) RemoveProcess(proc *Process) error {
 
 func (dm *DeploymentMap) JobRequest(job *Job) error {
 
+	dm.logger.DebugWith("Job request", "job", job)
+
 	dep := dm.FindDeployment(job.Namespace, job.Function, job.Version, true)
 
 	if dep == nil {
@@ -166,16 +208,34 @@ func (dm *DeploymentMap) JobRequest(job *Job) error {
 			return fmt.Errorf("Function with alias %s was not found", ver)
 		}
 
-		dep = NewDeployment(job.Namespace, job.Function, ver)
+		dep = NewDeployment(&Deployment{Namespace: job.Namespace, Function: job.Function, Version: ver})
 		dep.jobs[job.Name] = job
 		dm.UpdateDeployment(dep)
 
 		return nil
 	}
 
-	//TODO: allocation logic
+	_, ok := dep.jobs[job.Name]
+	if ok {
+		return fmt.Errorf("Job named %s already exist", job.Name)
+	}
+	alloc, requiered := dep.SumAllocation()
+	dm.logger.DebugWith("SumAllocation", "alloc", alloc, "req", requiered)
 
-	return nil
+	if job.MinProcesses <= dep.ExpectedProc - alloc {
+		dep.jobs[job.Name] = job
+		job.ExpectedProc = dep.ExpectedProc - alloc
+		if job.MaxProcesses > 0 && job.ExpectedProc > job.MaxProcesses {
+			job.ExpectedProc = job.MaxProcesses
+		}
+
+		fmt.Println("out7",dep.jobs)
+		return nil
+	}
+
+	//TODO: allocation w rebalance logic
+
+	return fmt.Errorf("No resources for job %s", job.Name)
 }
 
 func (dm *DeploymentMap) RemoveJob(job *Job) error {
@@ -187,6 +247,7 @@ func (dm *DeploymentMap) RemoveJob(job *Job) error {
 			"namespace", job.Namespace, "function", job.Function, "version", job.Version)
 		return nil
 	}
+
 
 	//TODO: handle pending & rebalancing
 

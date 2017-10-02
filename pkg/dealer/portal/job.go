@@ -83,10 +83,9 @@ func (jp *JobsPortal) listJobs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, j := range jobList.([]*jobs.Job) {
-		if namespace == "" || namespace == j.Namespace {
-			list = append(list, &JobRequest{Job:j})
-		}
+		list = append(list, &JobRequest{Job:j})
 	}
+
 	if err := render.RenderList(w, r, list ); err != nil {
 		render.Render(w, r, ErrRender(err))
 		return

@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"github.com/nuclio/nuclio-sdk"
 	"github.com/nuclio/nuclio/pkg/dealer/jobs"
+	"github.com/go-chi/render"
 )
 
 func NewPortal(logger nuclio.Logger, managerCtx *jobs.ManagerContext, port int) (DealerPortal, error) {
@@ -83,7 +84,81 @@ func (d *DealerPortal) Start() error {
 		})
 	})
 
+	r.Route("/deploy", func(r chi.Router) {
+		r.Post("/", d.updateDeployment)
+		r.Get("/", d.listDeployments)
+	})
+
 	fmt.Printf("Starting Dealer Portal in port: %d\n", d.port)
 	return http.ListenAndServe(fmt.Sprintf(":%d", d.port), r)
+}
+
+
+func (d *DealerPortal) updateDeployment(w http.ResponseWriter, r *http.Request) {
+	data := &DeployRequest{}
+	if err := render.Bind(r, data); err != nil {
+		render.Render(w, r, ErrInvalidRequest(err))
+		return
+	}
+
+	proc, err := d.managerContext.SubmitReq(&jobs.RequestMessage{
+		Object:data.Deployment, Type:jobs.RequestTypeDeployUpdate})
+
+	if err != nil {
+		render.Render(w, r, ErrInvalidRequest(err))
+		return
+	}
+
+	if err := render.Render(w, r, &DeployRequest{ Deployment: proc.(*jobs.Deployment)}); err != nil {
+		render.Render(w, r, ErrRender(err))
+		return
+	}
+}
+
+func (jp *DealerPortal) listDeployments(w http.ResponseWriter, r *http.Request) {
+	namespace := chi.URLParam(r, "namespace")
+	name := chi.URLParam(r, "name")
+	list := []render.Renderer{}
+
+	depList, err := jp.managerContext.SubmitReq(&jobs.RequestMessage{ Name:name,
+		Namespace:namespace, Type:jobs.RequestTypeDeployList})
+
+	if err != nil {
+		render.Render(w, r, ErrInvalidRequest(err))
+		return
+	}
+
+	for _, d := range depList.([]*jobs.Deployment) {
+		list = append(list, &DeployRequest{Deployment:d})
+	}
+
+	if err := render.RenderList(w, r, list ); err != nil {
+		render.Render(w, r, ErrRender(err))
+		return
+	}
+}
+
+
+
+type DeployRequest struct {
+	*jobs.Deployment
+	Processes []string
+	Jobs []string
+}
+
+func (d *DeployRequest) Bind(r *http.Request) error {
+	return nil
+}
+
+func (d *DeployRequest) Render(w http.ResponseWriter, r *http.Request) error {
+	d.Processes = []string{}
+	d.Jobs = []string{}
+	for name, _ := range d.GetProcs() {
+		d.Processes = append(d.Processes, name)
+	}
+	for name, _ := range d.GetJobs() {
+		d.Jobs = append(d.Jobs, name)
+	}
+	return nil
 }
 

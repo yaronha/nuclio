@@ -83,10 +83,9 @@ func (pp *ProcPortal) listProcess(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, p := range procList.([]*jobs.Process) {
-		if namespace == "" || namespace == p.Namespace {
-			list = append(list, &ProcessRequest{Process:p})
-		}
+		list = append(list, &ProcessRequest{Process:p})
 	}
+
 	if err := render.RenderList(w, r, list ); err != nil {
 		render.Render(w, r, ErrRender(err))
 		return

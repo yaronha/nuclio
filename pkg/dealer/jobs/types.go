@@ -82,6 +82,10 @@ const (
 	RequestTypeProcCreate
 	RequestTypeProcUpdate
 
+	RequestTypeDeployUpdate
+	RequestTypeDeployRemove
+	RequestTypeDeployList
+
 )
 
 type RespChanType struct {

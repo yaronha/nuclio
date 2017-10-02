@@ -44,7 +44,6 @@ type BaseProcess struct {
 	Alias         string                `json:"alias,omitempty"`
 	IP            string                `json:"ip"`
 	Port          int                   `json:"port"`
-	Metrics       map[string]int        `json:"metrics,omitempty"`
 	State         ProcessState          `json:"state"`
 	LastUpdate    time.Time             `json:"lastUpdate,omitempty"`
 }
@@ -57,7 +56,6 @@ type Process struct {
 	Alias         string                `json:"alias,omitempty"`
 	IP            string                `json:"ip"`
 	Port          int                   `json:"port"`
-	Metrics       map[string]int        `json:"metrics,omitempty"`
 	State         ProcessState          `json:"state"`
 	LastUpdate    time.Time             `json:"lastUpdate,omitempty"`
 
@@ -77,7 +75,6 @@ type ProcessMessage struct {
 	Alias         string                `json:"alias,omitempty"`
 	IP            string                `json:"ip"`
 	Port          int                   `json:"port"`
-	Metrics       map[string]int        `json:"metrics,omitempty"`
 	State         ProcessState          `json:"state"`
 	LastUpdate    time.Time             `json:"lastUpdate,omitempty"`
 
@@ -97,7 +94,6 @@ func NewProcess(logger nuclio.Logger, context *ManagerContext, proc *Process) (*
 		proc.Namespace = "default"
 	}
 	proc.LastUpdate = time.Now()
-	proc.Metrics = make(map[string]int)
 	proc.ctx = context
 	proc.logger = logger
 	return proc, nil

@@ -26,7 +26,7 @@ type Job struct {
 	Name               string                `json:"name"`
 	Namespace          string                `json:"namespace"`
 	FunctionURI        string                `json:"functionURI"`
-	Function           string                `json:"functionURI"`
+	Function           string                `json:"function"`
 	Version            string                `json:"version,omitempty"`
 	Suspend            bool                  `json:"suspend,omitempty"`
 	ExpectedProc       int                   `json:"expectedProc"`
@@ -44,15 +44,20 @@ type Job struct {
 
 
 func NewJob(context *ManagerContext, newJob *Job) (*Job, error) {
-	var i int
+
 	if newJob.Namespace == "" {
 		newJob.Namespace = "default"
 	}
+	if newJob.MinProcesses == 0 {
+		newJob.MinProcesses = 1
+	}
+
 	newJob.Processes = make(map[string]*Process)
 	newJob.tasks = make([]*Task, newJob.TotalTasks)
 	newJob.StartTime = time.Now()
 	newJob.ctx = context
-	for i=0; i<newJob.TotalTasks; i++ {
+
+	for i:=0; i<newJob.TotalTasks; i++ {
 		newJob.tasks[i] = &Task{Id:i}
 	}
 	return newJob, nil

@@ -49,6 +49,7 @@ func NewJobManager(config string, logger nuclio.Logger) (*JobManager, error) {
 
 	reqChan2 := make(chan *jobs.RequestMessage, 100)
 	newManager.Ctx.RequestsChannel = reqChan2
+	newManager.DeployMap, _ = jobs.NewDeploymentMap(logger, &newManager.Ctx)
 
 	newManager.logger = logger
 	return &newManager, nil
@@ -61,6 +62,7 @@ type JobManager struct {
 	verbose       bool
 	Jobs          map[string]*jobs.Job
 	Processes     map[string]*jobs.Process
+	DeployMap     *jobs.DeploymentMap
 	asyncClient   *client.AsyncClient
 
 }
@@ -178,7 +180,20 @@ func (jm *JobManager) Start() error {
 					}
 
 
+				case jobs.RequestTypeDeployUpdate:
+					dep := req.Object.(*jobs.Deployment)
+					err := jm.DeployMap.UpdateDeployment(dep)
+					req.ReturnChan <- &jobs.RespChanType{
+						Err: err, Object: dep}
+
+				case jobs.RequestTypeDeployList:
+					req.ReturnChan <- &jobs.RespChanType{
+						Err: nil, Object: jm.DeployMap.GetAllDeployments(req.Namespace, req.Name)}
+
+
 				}
+
+
 			}
 
 
@@ -202,12 +217,19 @@ func (jm *JobManager) AddJob(job *jobs.Job) error {
 	if _, ok := jm.Jobs[key]; ok {
 		return fmt.Errorf("Job %s already exist", key)
 	}
+
 	jm.Jobs[key] = job
+	err = jm.DeployMap.JobRequest(job)
+	if err != nil {
+		return errors.Wrap(err, "Failed to add job to deploymap")
+	}
+
 	matchProcs := jm.findFuncProcesses(job)
 	if len(matchProcs)>0 {
 		matchProcs[0].SetJob(job)
 		job.AllocateTasks(matchProcs[0])
 	}
+
 	return nil
 }
 
@@ -250,6 +272,11 @@ func (jm *JobManager) AddProcess(proc *jobs.Process) error {
 	}
 
 	jm.Processes[key] = proc
+	err = jm.DeployMap.UpdateProcess(proc)
+	if err != nil {
+		return errors.Wrap(err, "Failed to add process to deploymap")
+	}
+
 	matchJobs := jm.findFuncJobs(proc)
 	if len(matchJobs)>0 {
 		proc.SetJob(matchJobs[0])
