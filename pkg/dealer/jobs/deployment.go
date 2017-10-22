@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"github.com/pkg/errors"
 )
 
 type Deployment struct {
@@ -237,9 +236,11 @@ func (dm *DeploymentMap) JobRequest(job *Job) error {
 		}
 		_, err := strconv.Atoi(ver)
 		if ver != "latest" && err != nil {
+			// if ver != latest and its not an Int its an alias, must have a deploy to continue
 			return fmt.Errorf("Function with alias %s was not found", ver)
 		}
 
+		// create a new deployment stub from the job information and return (no resources for it yet)
 		dep = NewDeployment(&Deployment{Namespace: job.Namespace, Function: job.Function, Version: ver})
 		dep.jobs[job.Name] = job
 		dm.UpdateDeployment(dep)
@@ -253,23 +254,6 @@ func (dm *DeploymentMap) JobRequest(job *Job) error {
 	}
 
 	return dm.addJob(job, dep)
-}
-
-func (dm *DeploymentMap) RemoveJob(job *Job) error {
-
-	dep := dm.FindDeployment(job.Namespace, job.Function, job.Version, true)
-
-	if dep == nil {
-		dm.logger.WarnWith("Deployment wasnt found in job remove",
-			"namespace", job.Namespace, "function", job.Function, "version", job.Version)
-		return nil
-	}
-
-
-	//TODO: handle pending & rebalancing
-
-	delete(dep.jobs, job.Name)
-	return nil
 }
 
 func (dm *DeploymentMap) addJob(job *Job, dep *Deployment) error {
@@ -291,6 +275,23 @@ func (dm *DeploymentMap) addJob(job *Job, dep *Deployment) error {
 	//TODO: allocation w rebalance logic
 
 	return fmt.Errorf("No resources for job %s", job.Name)
+}
+
+func (dm *DeploymentMap) RemoveJob(job *Job) error {
+
+	dep := dm.FindDeployment(job.Namespace, job.Function, job.Version, true)
+
+	if dep == nil {
+		dm.logger.WarnWith("Deployment wasnt found in job remove",
+			"namespace", job.Namespace, "function", job.Function, "version", job.Version)
+		return nil
+	}
+
+
+	//TODO: handle pending & rebalancing
+
+	delete(dep.jobs, job.Name)
+	return nil
 }
 
 
@@ -317,4 +318,6 @@ func (dm *DeploymentMap) updateDeployJobs(dep *Deployment) error {
 
 		// TODO: handle update and delete existing job
 	}
+
+	return nil
 }

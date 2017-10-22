@@ -77,10 +77,12 @@ func (j *Job) GetTask(id int) *Task {
 	return j.tasks[id]
 }
 
+// return list of job tasks
 func (j *Job) GetTasks() []*Task {
 	return j.tasks
 }
 
+// find N tasks which are unallocated starting from index
 func (j *Job) findUnallocTask(num int, from *int) []*Task {
 	list := []*Task{}
 	if num <= 0 {
@@ -99,6 +101,7 @@ func (j *Job) findUnallocTask(num int, from *int) []*Task {
 	return list
 }
 
+// allocate available tasks to process
 func (j *Job) AllocateTasks(proc *Process) error {
 
 	tasksPerProc := j.TotalTasks / j.ExpectedProc
@@ -143,6 +146,7 @@ func (j *Job) AllocateTasks(proc *Process) error {
 	return nil
 }
 
+// updated expected number of processes and rebalance tasks
 func (j *Job) UpdateNumProcesses(newnum int, force bool) error {
 	if !force && newnum == j.ExpectedProc {
 		return nil
@@ -162,16 +166,18 @@ func (j *Job) Rebalance() error {
 	var tasksUnder, tasksEqual, tasksPlus1, tasksOver []*Process
 
 	for _, p := range j.Processes {
-		procTasks = len(p.GetTasks(true))
-		switch {
-		case procTasks < tasksPerProc:
-			tasksUnder = append(tasksUnder, p)
-		case procTasks == tasksPerProc:
-			tasksEqual = append(tasksEqual, p)
-		case procTasks == tasksPerProc + 1:
-			tasksPlus1 = append(tasksPlus1, p)
-		default:
-			tasksOver = append(tasksOver, p)
+		if !p.removingJob {
+			procTasks = len(p.GetTasks(true))
+			switch {
+			case procTasks < tasksPerProc:
+				tasksUnder = append(tasksUnder, p)
+			case procTasks == tasksPerProc:
+				tasksEqual = append(tasksEqual, p)
+			case procTasks == tasksPerProc + 1:
+				tasksPlus1 = append(tasksPlus1, p)
+			default:
+				tasksOver = append(tasksOver, p)
+			}
 		}
 	}
 

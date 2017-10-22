@@ -79,6 +79,7 @@ func (jm *JobManager) SubmitReq(request *jobs.RequestMessage) (interface{}, erro
 
 func (jm *JobManager) Start() error {
 
+	// TODO: need a go routine that verify periodically PODs are up (check last update time and just verify old ones)
 
 	err := jm.asyncClient.Start()
 	if err != nil {

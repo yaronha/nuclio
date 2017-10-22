@@ -105,6 +105,7 @@ func (p *Process) AsString() string {
 	return fmt.Sprintf("%s-%s:%s",p.Name,p.job.Name,p.tasks)
 }
 
+// force remove a process: mark its tasks unassigned, remove from job, rebalance (assign the tasks to other procs)
 func (p *Process) Remove() error {
 
 	for _, task := range p.tasks {
@@ -124,14 +125,7 @@ func (p *Process) Remove() error {
 	return err
 }
 
-func (p *Process) evictTasks() error {
-	for _, task := range p.tasks {
-		task.State = TaskStateStopping
-	}
-
-	return p.PushUpdates()
-}
-
+// assign a process to a job
 func (p *Process) SetJob(job *Job) error {
 	if p.job != nil {
 		return fmt.Errorf("Process already assigned a job, use clear job method first")
@@ -141,6 +135,7 @@ func (p *Process) SetJob(job *Job) error {
 	return nil
 }
 
+// Request to stop all process tasks, clear Job assosiation if no tasks
 func (p *Process) ClearJob() error {
 	if p.job == nil {
 		return nil
@@ -152,9 +147,14 @@ func (p *Process) ClearJob() error {
 	}
 	p.removingJob = true
 
-	return p.evictTasks()
+	for _, task := range p.tasks {
+		task.State = TaskStateStopping
+	}
+
+	return p.PushUpdates()
 }
 
+// return list of tasks assigned to this proc
 func (p *Process) GetTasks(active bool) []*Task {
 	list := []*Task{}
 	for _, task := range p.tasks {
@@ -165,6 +165,7 @@ func (p *Process) GetTasks(active bool) []*Task {
 	return list
 }
 
+// add list of tasks to process
 func (p *Process) AddTasks(tasks []*Task) {
 	for _, task := range tasks {
 		task.State = TaskStateAlloc
@@ -176,6 +177,7 @@ func (p *Process) AddTasks(tasks []*Task) {
 
 }
 
+// remove specific task from proc
 func (p *Process) RemoveTask(id int) {
 	for i, task := range p.tasks {
 		if task.Id == id {
@@ -197,6 +199,7 @@ func (p *Process) StopNTasks(toDelete int) {
 	}
 }
 
+// send updates to process
 func (p *Process) PushUpdates() error {
 	p.logger.DebugWith("Push updates to processor","processor",p.Name, "state", p.AsString())
 	if p.IP == "" {
@@ -213,7 +216,7 @@ func (p *Process) PushUpdates() error {
 	request := client.ChanRequest{
 		Method: "POST",
 		HostURL: host,
-		Url: fmt.Sprintf("http://%s/events/%s", host, p.job.Name),
+		Url: fmt.Sprintf("http://%s/events/%s", host, p.job.Name), //TODO: have proper URL
 		Body: body,
 		NeedResp: false,
 		ReturnChan: p.ctx.ProcRespChannel,
@@ -221,14 +224,14 @@ func (p *Process) PushUpdates() error {
 
 	p.ctx.Client.Submit(&request)
 
-	//p.emulateProcess()
-	//fmt.Println(p.AsString())
 	return nil
 }
 
+// handle update requests from process or responses following Push Update ops
 func (p *Process) HandleUpdates(msg *ProcessMessage, isRequest bool) error {
 
 	p.LastUpdate = time.Now()
+	tasksDeleted := false
 
 	// Update state of currently allocated tasks
 	for _, ctask := range msg.Tasks {
@@ -250,6 +253,7 @@ func (p *Process) HandleUpdates(msg *ProcessMessage, isRequest bool) error {
 			jtask.State = TaskStateUnassigned
 			p.RemoveTask(taskID)
 			jtask.SetProcess(nil)
+			tasksDeleted = true
 		// TODO: find which process need to get more tasks and push an update
 		case TaskStateCompleted:
 			if jtask.State != TaskStateCompleted {
@@ -271,21 +275,34 @@ func (p *Process) HandleUpdates(msg *ProcessMessage, isRequest bool) error {
 
 	}
 
-	// TODO: Save current state (checkpoints, completed list ..), or this can be done by the function processor?
 
 
-	if isRequest {
+	// if it is a request from the process check if need to allocate tasks (will respond with updated task list)
+	if isRequest && !p.removingJob {
 		err := p.job.AllocateTasks(p)
 		if err !=nil {
 			return errors.Wrap(err, "Failed to allocate tasks")
 		}
-		// TODO: send response
 	}
 
-	//return p.job.Rebalance() TODO: circular
+	// if some tasks deleted (returned to pool) rebalance
+	if tasksDeleted {
+		p.job.Rebalance()    //TODO: verify no circular dep
+	}
+
+	// if in a state of removing job and all tasks removed clear job assosiation
+	if p.removingJob && len(p.tasks) == 0 {
+		delete(p.job.Processes, p.Name)
+		p.job = nil
+	}
+
 	return nil
+
+	// TODO: Save current state (checkpoints, completed list ..), or this can be done by the function processor?
+
 }
 
+// return an enriched process struct for API
 func (p *Process) GetProcessState() *ProcessMessage  {
 	tasklist := []Task{}
 	for _, task := range p.tasks {
@@ -301,6 +318,8 @@ func (p *Process) GetProcessState() *ProcessMessage  {
 	return &msg
 }
 
+
+// emulate a process, may be broken
 func (p *Process) emulateProcess()  {
 	tasklist := []Task{}
 	for _, task := range p.tasks {
