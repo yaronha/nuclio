@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"github.com/pkg/errors"
 )
 
 type Deployment struct {
@@ -14,11 +15,21 @@ type Deployment struct {
 	Version       string                `json:"version,omitempty"`
 	Alias         string                `json:"alias,omitempty"`
 
+	JobRequests   []JobReq              `json:"jobRequests,omitempty"`
 	ExpectedProc  int                   `json:"expectedProc,omitempty"`
-	RequieredProc int                   `json:"requieredProc,omitempty"`
 	procs         map[string]*Process
 	jobs          map[string]*Job
 
+}
+
+type JobReq struct {
+	Name               string                `json:"name"`
+	TotalTasks         int                   `json:"totalTasks"`
+	MaxTaskAllocation  int                   `json:"maxTaskAllocation,omitempty"`
+	MinProcesses       int                   `json:"minProcesses,omitempty"`
+	MaxProcesses       int                   `json:"maxProcesses,omitempty"`
+	Metadata           interface{}           `json:"metadata,omitempty"`
+	IsMultiVersion     bool                  `json:"isMultiVersion,omitempty"`
 }
 
 func (d *Deployment) GetProcs() map[string]*Process {
@@ -40,14 +51,14 @@ func (d *Deployment) SumAllocation() (alloc, required int) {
 }
 
 type DeploymentMap struct {
-	deployments map[string][]*Deployment
+	Deployments   map[string][]*Deployment
 	logger        nuclio.Logger
 	ctx           *ManagerContext
 }
 
 func NewDeploymentMap(logger nuclio.Logger, context *ManagerContext) (*DeploymentMap, error) {
 	newDeploymentMap := DeploymentMap{logger:logger, ctx:context}
-	newDeploymentMap.deployments = map[string][]*Deployment{}
+	newDeploymentMap.Deployments = map[string][]*Deployment{}
 	return &newDeploymentMap, nil
 }
 
@@ -65,10 +76,12 @@ func (dm *DeploymentMap) UpdateDeployment(deployment *Deployment) error {
 	}
 	dm.logger.DebugWith("Update Deployment", "deployment", deployment)
 
-	list, ok := dm.deployments[deployment.Namespace + "." + deployment.Function]
+	// find the deployment list for the desired namespace/function (w/o version)
+	list, ok := dm.Deployments[deployment.Namespace + "." + deployment.Function]
 	if !ok {
+		// if not found create a new deployment list
 		newList := []*Deployment{NewDeployment(deployment)}
-		dm.deployments[deployment.Namespace + "." + deployment.Function] = newList
+		dm.Deployments[deployment.Namespace + "." + deployment.Function] = newList
 		return nil
 	}
 
@@ -103,14 +116,17 @@ func (dm *DeploymentMap) UpdateDeployment(deployment *Deployment) error {
 		}
 	}
 
+	// if its a new deployment add it to the list
+	// TODO: validate values
 	list = append(list, deployment)
 	return nil
 }
 
 func (dm *DeploymentMap) GetAllDeployments(namespace, function string) []*Deployment {
 	list := []*Deployment{}
-	for key, deps := range dm.deployments {
+	for key, deps := range dm.Deployments {
 		split := strings.Split(key, ".")
+		// TODO: filter by function , if both ns & function direct lookup deps
 		if namespace == "" || namespace == split[0] {
 			list = append(list, deps...)
 		}
@@ -120,7 +136,7 @@ func (dm *DeploymentMap) GetAllDeployments(namespace, function string) []*Deploy
 }
 
 func (dm *DeploymentMap) FindDeployment(namespace, function, version string, withAliases bool) *Deployment {
-	list, ok := dm.deployments[namespace + "." + function]
+	list, ok := dm.Deployments[namespace + "." + function]
 	if !ok {
 		return nil
 	}
@@ -138,15 +154,31 @@ func (dm *DeploymentMap) FindDeployment(namespace, function, version string, wit
 	return nil
 }
 
+func (dm *DeploymentMap) ListJobs(namespace, function, version string) []*Job {
+	list := []*Job{}
+
+	deps := dm.GetAllDeployments(namespace, function)
+	for _, dep := range deps {
+		for _, job := range dep.GetJobs() {
+			if version == "" || version == job.Version {
+				list = append(list, job)
+			}
+		}
+	}
+
+	return list
+}
+
+
 func (dm *DeploymentMap) RemoveDeployment(namespace, function, version string) error {
-	list, ok := dm.deployments[namespace + "." + function]
+	list, ok := dm.Deployments[namespace + "." + function]
 	if !ok {
 		return nil
 	}
 
 	for i, dep := range list {
 		if dep.Version == version  {
-			dm.deployments[namespace + "." + function] = append(list[:i], list[i+1:]...)
+			dm.Deployments[namespace + "." + function] = append(list[:i], list[i+1:]...)
 			return nil
 		}
 	}
@@ -219,6 +251,29 @@ func (dm *DeploymentMap) JobRequest(job *Job) error {
 	if ok {
 		return fmt.Errorf("Job named %s already exist", job.Name)
 	}
+
+	return dm.addJob(job, dep)
+}
+
+func (dm *DeploymentMap) RemoveJob(job *Job) error {
+
+	dep := dm.FindDeployment(job.Namespace, job.Function, job.Version, true)
+
+	if dep == nil {
+		dm.logger.WarnWith("Deployment wasnt found in job remove",
+			"namespace", job.Namespace, "function", job.Function, "version", job.Version)
+		return nil
+	}
+
+
+	//TODO: handle pending & rebalancing
+
+	delete(dep.jobs, job.Name)
+	return nil
+}
+
+func (dm *DeploymentMap) addJob(job *Job, dep *Deployment) error {
+
 	alloc, requiered := dep.SumAllocation()
 	dm.logger.DebugWith("SumAllocation", "alloc", alloc, "req", requiered)
 
@@ -238,19 +293,28 @@ func (dm *DeploymentMap) JobRequest(job *Job) error {
 	return fmt.Errorf("No resources for job %s", job.Name)
 }
 
-func (dm *DeploymentMap) RemoveJob(job *Job) error {
 
-	dep := dm.FindDeployment(job.Namespace, job.Function, job.Version, true)
+func (dm *DeploymentMap) updateDeployJobs(dep *Deployment) error {
+	for _, rjob := range dep.JobRequests {
 
-	if dep == nil {
-		dm.logger.WarnWith("Deployment wasnt found in job remove",
-			"namespace", job.Namespace, "function", job.Function, "version", job.Version)
-		return nil
+		_, ok := dep.jobs[rjob.Name]
+		if !ok {
+			newJob := &Job{Name:dep.Name, Namespace:dep.Namespace,
+				Function:dep.Function, Version:dep.Version,
+				TotalTasks:rjob.TotalTasks, MaxTaskAllocation:rjob.MaxTaskAllocation,
+				MaxProcesses:rjob.MaxProcesses, MinProcesses:rjob.MinProcesses,
+			}
+			job, err := NewJob(&dm.ctx, newJob)
+			if err != nil {
+				dm.logger.ErrorWith("Failed to create a job", "deploy", dep.Name, "job", rjob.Name, "err", err)
+			}
+			err = dm.addJob(job, dep)
+			if err != nil {
+				dm.logger.ErrorWith("Failed on adding job to deployment", "deploy", dep.Name, "job", rjob.Name, "err", err)
+			}
+
+		}
+
+		// TODO: handle update and delete existing job
 	}
-
-
-	//TODO: handle pending & rebalancing
-
-	delete(dep.jobs, job.Name)
-	return nil
 }

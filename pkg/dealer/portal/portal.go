@@ -58,6 +58,7 @@ func (d *DealerPortal) Start() error {
 		r.Post("/", jobsPortal.createJob)
 		// Subrouters:
 
+		// TODO: add func level
 		r.Route("/{namespace}", func(r chi.Router) {
 			r.Get("/", jobsPortal.listJobs)
 			r.Route("/{jobID}", func(r chi.Router) {
@@ -109,7 +110,7 @@ func (d *DealerPortal) updateDeployment(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := render.Render(w, r, &DeployRequest{ Deployment: proc.(*jobs.Deployment)}); err != nil {
+	if err := render.Render(w, r, &DeployResp{ Deployment: proc.(*jobs.Deployment)}); err != nil {
 		render.Render(w, r, ErrRender(err))
 		return
 	}
@@ -117,7 +118,7 @@ func (d *DealerPortal) updateDeployment(w http.ResponseWriter, r *http.Request) 
 
 func (jp *DealerPortal) listDeployments(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
-	name := chi.URLParam(r, "name")
+	name := chi.URLParam(r, "function")
 	list := []render.Renderer{}
 
 	depList, err := jp.managerContext.SubmitReq(&jobs.RequestMessage{ Name:name,
@@ -129,7 +130,7 @@ func (jp *DealerPortal) listDeployments(w http.ResponseWriter, r *http.Request) 
 	}
 
 	for _, d := range depList.([]*jobs.Deployment) {
-		list = append(list, &DeployRequest{Deployment:d})
+		list = append(list, &DeployResp{Deployment:d})
 	}
 
 	if err := render.RenderList(w, r, list ); err != nil {
@@ -142,8 +143,6 @@ func (jp *DealerPortal) listDeployments(w http.ResponseWriter, r *http.Request) 
 
 type DeployRequest struct {
 	*jobs.Deployment
-	Processes []string
-	Jobs []string
 }
 
 func (d *DeployRequest) Bind(r *http.Request) error {
@@ -151,6 +150,20 @@ func (d *DeployRequest) Bind(r *http.Request) error {
 }
 
 func (d *DeployRequest) Render(w http.ResponseWriter, r *http.Request) error {
+	return nil
+}
+
+type DeployResp struct {
+	*jobs.Deployment
+	Processes []string
+	Jobs []string
+}
+
+func (d *DeployResp) Bind(r *http.Request) error {
+	return nil
+}
+
+func (d *DeployResp) Render(w http.ResponseWriter, r *http.Request) error {
 	d.Processes = []string{}
 	d.Jobs = []string{}
 	for name, _ := range d.GetProcs() {

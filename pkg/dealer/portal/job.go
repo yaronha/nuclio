@@ -38,10 +38,11 @@ type JobsPortal struct {
 func (jp *JobsPortal) getJob(w http.ResponseWriter, r *http.Request) {
 	//ctx := r.Context()
 	namespace := chi.URLParam(r, "namespace")
+	function := chi.URLParam(r, "function")
 	jobID := chi.URLParam(r, "jobID")
 
 	job, err := jp.managerContext.SubmitReq(&jobs.RequestMessage{
-		Name:jobID, Namespace:namespace, Type:jobs.RequestTypeJobGet})
+		Name:jobID, Namespace:namespace, Function:function , Type:jobs.RequestTypeJobGet})
 
 	if err != nil  {
 		http.Error(w, http.StatusText(422), 422)
@@ -57,10 +58,11 @@ func (jp *JobsPortal) getJob(w http.ResponseWriter, r *http.Request) {
 func (jp *JobsPortal) deleteJob(w http.ResponseWriter, r *http.Request) {
 
 	namespace := chi.URLParam(r, "namespace")
+	function := chi.URLParam(r, "function")
 	jobID := chi.URLParam(r, "jobID")
 
 	_, err := jp.managerContext.SubmitReq(&jobs.RequestMessage{
-		Name:jobID, Namespace:namespace, Type:jobs.RequestTypeJobDel})
+		Name:jobID, Namespace:namespace, Function:function, Type:jobs.RequestTypeJobDel})
 
 	if err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
@@ -72,10 +74,11 @@ func (jp *JobsPortal) deleteJob(w http.ResponseWriter, r *http.Request) {
 
 func (jp *JobsPortal) listJobs(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
+	function := chi.URLParam(r, "function")
 	list := []render.Renderer{}
 
 	jobList, err := jp.managerContext.SubmitReq(&jobs.RequestMessage{ Name:"",
-		Namespace:namespace, Type:jobs.RequestTypeJobList})
+		Namespace:namespace, Function:function, Type:jobs.RequestTypeJobList})
 
 	if err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
@@ -114,6 +117,7 @@ func (jp *JobsPortal) createJob(w http.ResponseWriter, r *http.Request) {
 func (jp *JobsPortal) updateJob(w http.ResponseWriter, r *http.Request) {
 
 	namespace := chi.URLParam(r, "namespace")
+	function := chi.URLParam(r, "function")
 	jobID := chi.URLParam(r, "jobID")
 
 	data := &JobRequest{}
@@ -123,7 +127,7 @@ func (jp *JobsPortal) updateJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	job, err := jp.managerContext.SubmitReq(&jobs.RequestMessage{
-		Name:jobID, Namespace:namespace, Object:data.Job, Type:jobs.RequestTypeJobUpdate})
+		Name:jobID, Namespace:namespace, Function:function, Object:data.Job, Type:jobs.RequestTypeJobUpdate})
 
 	if err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))

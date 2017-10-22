@@ -94,9 +94,10 @@ type RespChanType struct {
 }
 
 type RequestMessage struct {
-	Name string
-	Namespace string
-	Type RequestType
-	Object interface{}
-	ReturnChan chan *RespChanType
+	Namespace   string
+	Function    string  // for jobs
+	Name        string
+	Type        RequestType
+	Object      interface{}
+	ReturnChan  chan *RespChanType
 }

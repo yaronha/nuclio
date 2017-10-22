@@ -37,8 +37,10 @@ type Job struct {
 	MaxProcesses       int                   `json:"maxProcesses,omitempty"`
 	//Generation         int
 	Processes          map[string]*Process   `json:"processes,omitempty"`
-	tasks              []*Task               `json:"tasks,omitempty"`
+	tasks              []*Task
+	fromDeployment     bool
 	CompletedTasks     []int                 `json:"completedTasks,omitempty"`
+	IsMultiVersion     bool                  `json:"isMultiVersion,omitempty"`
 	Metadata           interface{}           `json:"metadata,omitempty"`
 }
 
