@@ -312,9 +312,12 @@ func (p *Process) GetProcessState() *ProcessMessage  {
 	msg := ProcessMessage{}
 	msg.Name = p.Name
 	msg.Namespace = p.Namespace
+	msg.Function = p.Function
 	msg.Tasks = tasklist
-	msg.TotalTasks = p.job.TotalTasks
-	msg.Metadata = p.job.Metadata
+	if p.job != nil {
+		msg.TotalTasks = p.job.TotalTasks
+		msg.Metadata = p.job.Metadata
+	}
 	return &msg
 }
 

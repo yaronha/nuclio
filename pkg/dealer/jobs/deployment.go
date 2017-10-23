@@ -14,7 +14,7 @@ type Deployment struct {
 	Version       string                `json:"version,omitempty"`
 	Alias         string                `json:"alias,omitempty"`
 
-	JobRequests   []JobReq              `json:"jobRequests,omitempty"`
+	JobRequests   []*JobReq              `json:"jobRequests,omitempty"`
 	ExpectedProc  int                   `json:"expectedProc,omitempty"`
 	procs         map[string]*Process
 	jobs          map[string]*Job
@@ -76,11 +76,19 @@ func (dm *DeploymentMap) UpdateDeployment(deployment *Deployment) error {
 	dm.logger.DebugWith("Update Deployment", "deployment", deployment)
 
 	// find the deployment list for the desired namespace/function (w/o version)
-	list, ok := dm.Deployments[deployment.Namespace + "." + deployment.Function]
+	key := deployment.Namespace + "." + deployment.Function
+	list, ok := dm.Deployments[key]
 	if !ok {
 		// if not found create a new deployment list
-		newList := []*Deployment{NewDeployment(deployment)}
-		dm.Deployments[deployment.Namespace + "." + deployment.Function] = newList
+		dep := NewDeployment(deployment)
+		err := dm.updateDeployJobs(dep)
+		if err != nil {
+			dm.logger.ErrorWith("Failed to update jobs in deployment", "deploy", dep.Name, "err", err)
+			return err
+		}
+
+		newList := []*Deployment{dep}
+		dm.Deployments[key] = newList
 		return nil
 	}
 
@@ -112,7 +120,13 @@ func (dm *DeploymentMap) UpdateDeployment(deployment *Deployment) error {
 					"namespace", dep.Namespace, "function", dep.Function, "version", dep.Version,
 					"old-scale", dep.ExpectedProc, "new-scale", deployment.ExpectedProc)
 
-				dep.ExpectedProc = deployment.ExpectedProc
+				if dep.ExpectedProc != deployment.ExpectedProc {
+
+					// TODO: chanhe jobs expected and rebalance
+
+					dep.ExpectedProc = deployment.ExpectedProc
+
+				}
 			}
 
 			return nil
@@ -120,8 +134,52 @@ func (dm *DeploymentMap) UpdateDeployment(deployment *Deployment) error {
 	}
 
 	// if its a new deployment add it to the list
-	// TODO: validate values, config/create jobs
-	list = append(list, deployment)
+	dep := NewDeployment(deployment)
+	err := dm.updateDeployJobs(dep)
+	if err != nil {
+		dm.logger.ErrorWith("Failed to update jobs in deployment", "deploy", dep.Name, "err", err)
+		return err
+	}
+	dm.Deployments[key] = append(dm.Deployments[key], dep)
+	return nil
+}
+
+// read/update jobs from deployment TODO: assign expected procs per each , no need for update for now (stash it)
+func (dm *DeploymentMap) updateDeployJobs(dep *Deployment) error {
+	for _, rjob := range dep.JobRequests {
+
+		_, ok := dep.jobs[rjob.Name]
+		if !ok {
+			newJob := &Job{Name:rjob.Name, Namespace:dep.Namespace,
+				Function:dep.Function, Version:dep.Version,
+				TotalTasks:rjob.TotalTasks, MaxTaskAllocation:rjob.MaxTaskAllocation,
+				MaxProcesses:rjob.MaxProcesses, MinProcesses:rjob.MinProcesses,
+			}
+			job, err := NewJob(dm.ctx, newJob)
+			if err != nil {
+				dm.logger.ErrorWith("Failed to create a job", "deploy", dep.Name, "job", rjob.Name, "err", err)
+			}
+
+			// TODO: change for multi-job per dep & proc
+			job.ExpectedProc = dep.ExpectedProc
+			dep.jobs[rjob.Name] = job
+			for _, proc := range dep.procs {
+				if proc.job == nil {
+					proc.SetJob(job)
+					job.AllocateTasks(proc)
+					if err != nil {
+						dm.logger.ErrorWith("Failed to allocate jobtasks to proc", "deploy", dep.Name, "job", rjob.Name, "proc", proc.Name, "err", err)
+					}
+				}
+			}
+
+			dm.logger.DebugWith("updateDeployJobs", "jobs", dep.jobs)
+
+
+		}
+
+	}
+
 	return nil
 }
 
@@ -143,6 +201,7 @@ func (dm *DeploymentMap) GetAllDeployments(namespace, function string) []*Deploy
 func (dm *DeploymentMap) FindDeployment(namespace, function, version string, withAliases bool) *Deployment {
 	list, ok := dm.Deployments[namespace + "." + function]
 	if !ok {
+		dm.logger.DebugWith("FindDeployment - array not found", "namespace", namespace, "func", function)
 		return nil
 	}
 
@@ -156,6 +215,7 @@ func (dm *DeploymentMap) FindDeployment(namespace, function, version string, wit
 		}
 	}
 
+	dm.logger.DebugWith("FindDeployment - ver not found", "namespace", namespace, "func", function, "ver", version)
 	return nil
 }
 
@@ -213,9 +273,29 @@ func (dm *DeploymentMap) UpdateProcess(proc *Process) error {
 
 	// TODO: if new - validate, assign to jobs based on expected (per job) vs actual
 	// is it ready or just started in k8s
+
 	dep.procs[proc.Name] = proc
+	// TODO: check if proc is in ready state
+	// if proc is ready and not assigned to a job assign it to a job with missing procs
+	if proc.job == nil {
+		for _, job := range dep.jobs {
+			if job.ExpectedProc > len(job.Processes) {
+				dep.procs[proc.Name].SetJob(job)
+				err := job.AllocateTasks(proc)
+				if err != nil {
+					dm.logger.ErrorWith("Failed to allocate jobtasks to proc", "deploy", dep.Name, "job", job.Name, "proc", proc.Name, "err", err)
+				}
+				return nil
+			}
+		}
+	}
 	return nil
 }
+
+
+
+// ======
+
 
 // handle process removal, unused (TODO: POD delete or based on periodic scan/heatlh if no update reported in T time )
 func (dm *DeploymentMap) RemoveProcess(proc *Process) error {
@@ -308,30 +388,3 @@ func (dm *DeploymentMap) RemoveJob(job *Job) error {
 	return nil
 }
 
-// read/update jobs from deployment TODO: assign expected procs per each , no need for update for now (stash it)
-func (dm *DeploymentMap) updateDeployJobs(dep *Deployment) error {
-	for _, rjob := range dep.JobRequests {
-
-		_, ok := dep.jobs[rjob.Name]
-		if !ok {
-			newJob := &Job{Name:dep.Name, Namespace:dep.Namespace,
-				Function:dep.Function, Version:dep.Version,
-				TotalTasks:rjob.TotalTasks, MaxTaskAllocation:rjob.MaxTaskAllocation,
-				MaxProcesses:rjob.MaxProcesses, MinProcesses:rjob.MinProcesses,
-			}
-			job, err := NewJob(&dm.ctx, newJob)
-			if err != nil {
-				dm.logger.ErrorWith("Failed to create a job", "deploy", dep.Name, "job", rjob.Name, "err", err)
-			}
-			err = dm.addJob(job, dep)
-			if err != nil {
-				dm.logger.ErrorWith("Failed on adding job to deployment", "deploy", dep.Name, "job", rjob.Name, "err", err)
-			}
-
-		}
-
-		// TODO: handle update and delete existing job
-	}
-
-	return nil
-}

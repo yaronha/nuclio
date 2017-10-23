@@ -18,8 +18,6 @@ package app
 
 import (
 	"fmt"
-	"strings"
-	"strconv"
 	"github.com/nuclio/nuclio-sdk"
 	"github.com/pkg/errors"
 
@@ -29,7 +27,6 @@ import (
 
 func NewJobManager(config string, logger nuclio.Logger) (*JobManager, error) {
 	newManager := JobManager{}
-	newManager.Jobs = make(map[string]*jobs.Job)
 	newManager.Processes = make(map[string]*jobs.Process)
 	newManager.verbose = true   // TODO: from config
 
@@ -61,7 +58,6 @@ type JobManager struct {
 	Ctx           jobs.ManagerContext
 	RequestsChannel  chan *jobs.RequestMessage
 	verbose       bool
-	Jobs          map[string]*jobs.Job
 	Processes     map[string]*jobs.Process
 	DeployMap     *jobs.DeploymentMap
 	asyncClient   *client.AsyncClient
@@ -95,7 +91,7 @@ func (jm *JobManager) Start() error {
 				jm.logger.DebugWith("Got proc response", "body", string(resp.Body()))
 
 			case req := <-jm.Ctx.RequestsChannel:
-				jm.logger.DebugWith("Got chan request", "type", req.Type, "name", req.Name)
+				jm.logger.DebugWith("Got chan request", "type", req.Type, "name", req.Name, "namespace", req.Namespace)
 				switch req.Type {
 				case jobs.RequestTypeJobGet:
 					job, err := jm.GetJob(req.Namespace, req.Function, req.Name)
@@ -204,10 +200,10 @@ func (jm *JobManager) GetJob(namespace, function, name string) (*jobs.Job, error
 		}
 	}
 
-	return *jobs.Job{}, fmt.Errorf("Job %s %s %s not found", namespace, function, name)
+	return nil, fmt.Errorf("Job %s %s %s not found", namespace, function, name)
 }
 
-
+// TODO: add job before/after deployment was created
 func (jm *JobManager) AddJob(job *jobs.Job) error {
 
 	jm.logger.InfoWith("Adding new job", "job", job)
@@ -217,21 +213,9 @@ func (jm *JobManager) AddJob(job *jobs.Job) error {
 		return errors.Wrap(err, "Failed to add job")
 	}
 
-	key := jobs.JobKey(job.Name, job.Namespace)
-	if _, ok := jm.Jobs[key]; ok {
-		return fmt.Errorf("Job %s already exist", key)
-	}
-
-	jm.Jobs[key] = job
 	err = jm.DeployMap.JobRequest(job)
 	if err != nil {
 		return errors.Wrap(err, "Failed to add job to deploymap")
-	}
-
-	matchProcs := jm.findFuncProcesses(job)
-	if len(matchProcs)>0 {
-		matchProcs[0].SetJob(job)
-		job.AllocateTasks(matchProcs[0])
 	}
 
 	return nil
@@ -242,16 +226,10 @@ func (jm *JobManager) RemoveJob(name, namespace string) error {
 
 	jm.logger.InfoWith("Removing a job", "name", name, "namespace", namespace)
 
-	_, ok := jm.Jobs[jobs.JobKey(name, namespace)]
-	if !ok {
-		return fmt.Errorf("Job %s not found", name)
-	}
-
-	// TODO: clear resources
-	delete(jm.Jobs, jobs.JobKey(name, namespace))
 	return nil
 }
 
+// TODO: change to update various runtime job params
 func (jm *JobManager) UpdateJob(oldJob, newjob *jobs.Job) error {
 
 	jm.logger.InfoWith("Update a job", "old", oldJob, "new", newjob)
@@ -261,7 +239,7 @@ func (jm *JobManager) UpdateJob(oldJob, newjob *jobs.Job) error {
 }
 
 
-
+// TODO: diff or merge between POD add/update to process request update
 func (jm *JobManager) AddProcess(proc *jobs.Process) error {
 
 	jm.logger.InfoWith("Adding new process", "process", proc)
@@ -282,11 +260,6 @@ func (jm *JobManager) AddProcess(proc *jobs.Process) error {
 		return errors.Wrap(err, "Failed to add process to deploymap")
 	}
 
-	matchJobs := jm.findFuncJobs(proc)
-	if len(matchJobs)>0 {
-		proc.SetJob(matchJobs[0])
-		matchJobs[0].AllocateTasks(proc)
-	}
 	return nil
 }
 
@@ -315,47 +288,3 @@ func (jm *JobManager) UpdateProcess(oldProc *jobs.Process, newProc *jobs.Process
 
 }
 
-
-
-func (jm *JobManager) findFuncJobs(proc *jobs.Process) []*jobs.Job {
-	jobs := []*jobs.Job{}
-	for _, j := range jm.Jobs {
-		if IsFuncMatch(j.FunctionURI, proc ) && (j.MaxProcesses==0 || j.MaxProcesses <= len(j.Processes)) {
-			jobs = append(jobs, j)
-		}
-	}
-	return jobs
-}
-
-func (jm *JobManager) findFuncProcesses(job *jobs.Job) []*jobs.Process {
-	procs := []*jobs.Process{}
-	if job.MaxProcesses>0 && len(job.Processes) >= job.MaxProcesses {
-		return procs
-	}
-	for _, p := range jm.Processes {
-		if IsFuncMatch(job.FunctionURI, p ) {
-			procs = append(procs, p)
-		}
-	}
-	return procs
-}
-
-
-// check if the Job Function URI Match the Process/POD Function Name, Version or Alias
-func IsFuncMatch(uri string, proc *jobs.Process) bool {
-	if uri == "" {
-		return false
-	}
-	fparts := strings.Split(uri, ":")
-	if fparts[0] != proc.Function || len(fparts) > 2 {
-		return false
-	}
-	if len(fparts)==1 {
-		return proc.Version == "latest" || proc.Version == ""
-	}
-	_, err := strconv.Atoi(fparts[1])
-	if err != nil {
-		return fparts[1] == proc.Version
-	}
-	return fparts[1] == proc.Alias
-}
