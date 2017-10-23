@@ -84,8 +84,10 @@ func (dm *DeploymentMap) UpdateDeployment(deployment *Deployment) error {
 		return nil
 	}
 
+	// look for a specific deployment matching the version number, if found update it
 	for _, dep := range list {
 		if dep.Version == deployment.Version {
+			// check if for some reason the name in the deployment object changed
 			if dep.Name != "" && dep.Name != deployment.Name {
 				dm.logger.WarnWith("Deployment name changed",
 					"namespace", dep.Namespace, "function", dep.Function, "version", dep.Version,
@@ -93,6 +95,7 @@ func (dm *DeploymentMap) UpdateDeployment(deployment *Deployment) error {
 			}
 			dep.Name = deployment.Name
 
+			// check if the deployment Alias changed (may need to re-route events)
 			if dep.Alias != deployment.Alias {
 				// TODO: handle alias change, POD may already restart w new Alias
 				dm.logger.WarnWith("Deployment alias changed",
@@ -102,6 +105,7 @@ func (dm *DeploymentMap) UpdateDeployment(deployment *Deployment) error {
 				dep.Alias = deployment.Alias
 			}
 
+			// check if the deployment scale changed
 			if dep.ExpectedProc != deployment.ExpectedProc {
 				// TODO: handle ExpectedProc change (rebalance)
 				dm.logger.DebugWith("Deployment scale changed",
@@ -116,11 +120,12 @@ func (dm *DeploymentMap) UpdateDeployment(deployment *Deployment) error {
 	}
 
 	// if its a new deployment add it to the list
-	// TODO: validate values
+	// TODO: validate values, config/create jobs
 	list = append(list, deployment)
 	return nil
 }
 
+// return a filtered list of deployments (for portal)
 func (dm *DeploymentMap) GetAllDeployments(namespace, function string) []*Deployment {
 	list := []*Deployment{}
 	for key, deps := range dm.Deployments {
@@ -134,6 +139,7 @@ func (dm *DeploymentMap) GetAllDeployments(namespace, function string) []*Deploy
 	return list
 }
 
+// return a specific deployment by namespace, function name, and version (or alias)
 func (dm *DeploymentMap) FindDeployment(namespace, function, version string, withAliases bool) *Deployment {
 	list, ok := dm.Deployments[namespace + "." + function]
 	if !ok {
@@ -153,6 +159,7 @@ func (dm *DeploymentMap) FindDeployment(namespace, function, version string, wit
 	return nil
 }
 
+// List jobs assigned to namespace/function, all if no version specified or by version
 func (dm *DeploymentMap) ListJobs(namespace, function, version string) []*Job {
 	list := []*Job{}
 
@@ -168,7 +175,7 @@ func (dm *DeploymentMap) ListJobs(namespace, function, version string) []*Job {
 	return list
 }
 
-
+// ?? TODO: broken, unused
 func (dm *DeploymentMap) RemoveDeployment(namespace, function, version string) error {
 	list, ok := dm.Deployments[namespace + "." + function]
 	if !ok {
@@ -185,6 +192,7 @@ func (dm *DeploymentMap) RemoveDeployment(namespace, function, version string) e
 	return nil
 }
 
+// Handle process update notifications (e.g. new/update PODs)
 func (dm *DeploymentMap) UpdateProcess(proc *Process) error {
 
 	dm.logger.DebugWith("Update Process", "process", proc)
@@ -203,10 +211,13 @@ func (dm *DeploymentMap) UpdateProcess(proc *Process) error {
 		return nil
 	}
 
+	// TODO: if new - validate, assign to jobs based on expected (per job) vs actual
+	// is it ready or just started in k8s
 	dep.procs[proc.Name] = proc
 	return nil
 }
 
+// handle process removal, unused (TODO: POD delete or based on periodic scan/heatlh if no update reported in T time )
 func (dm *DeploymentMap) RemoveProcess(proc *Process) error {
 	dep := dm.FindDeployment(proc.Namespace, proc.Function, proc.Version, false)
 
@@ -220,6 +231,7 @@ func (dm *DeploymentMap) RemoveProcess(proc *Process) error {
 	return nil
 }
 
+// create new job, TODO: remove allow jobs only from new deploy
 func (dm *DeploymentMap) JobRequest(job *Job) error {
 
 	dm.logger.DebugWith("Job request", "job", job)
@@ -256,6 +268,7 @@ func (dm *DeploymentMap) JobRequest(job *Job) error {
 	return dm.addJob(job, dep)
 }
 
+// TODO: fix to only work w new deploy , may not be needed
 func (dm *DeploymentMap) addJob(job *Job, dep *Deployment) error {
 
 	alloc, requiered := dep.SumAllocation()
@@ -277,6 +290,7 @@ func (dm *DeploymentMap) addJob(job *Job, dep *Deployment) error {
 	return fmt.Errorf("No resources for job %s", job.Name)
 }
 
+// TODO: unused
 func (dm *DeploymentMap) RemoveJob(job *Job) error {
 
 	dep := dm.FindDeployment(job.Namespace, job.Function, job.Version, true)
@@ -294,7 +308,7 @@ func (dm *DeploymentMap) RemoveJob(job *Job) error {
 	return nil
 }
 
-
+// read/update jobs from deployment TODO: assign expected procs per each , no need for update for now (stash it)
 func (dm *DeploymentMap) updateDeployJobs(dep *Deployment) error {
 	for _, rjob := range dep.JobRequests {
 
