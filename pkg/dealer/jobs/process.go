@@ -35,7 +35,6 @@ const (
 	ProcessStateDelete    ProcessState = 3
 )
 
-
 type BaseProcess struct {
 	Name          string                `json:"name"`
 	Namespace     string                `json:"namespace"`
@@ -45,42 +44,36 @@ type BaseProcess struct {
 	IP            string                `json:"ip"`
 	Port          int                   `json:"port"`
 	State         ProcessState          `json:"state"`
-	LastUpdate    time.Time             `json:"lastUpdate,omitempty"`
+	LastEvent     time.Time             `json:"lastEvent,omitempty"`
+	TotalEvents   int                   `json:"totalEvents,omitempty"`
 }
 
 type Process struct {
-	Name          string                `json:"name"`
-	Namespace     string                `json:"namespace"`
-	Function      string                `json:"function"`
-	Version       string                `json:"version,omitempty"`
-	Alias         string                `json:"alias,omitempty"`
-	IP            string                `json:"ip"`
-	Port          int                   `json:"port"`
-	State         ProcessState          `json:"state"`
+	BaseProcess
+	deployment    *Deployment
 	LastUpdate    time.Time             `json:"lastUpdate,omitempty"`
 
 	//BaseProcess
 	logger        nuclio.Logger
 	ctx           *ManagerContext
-	removingJob   bool
-	job           *Job
+	removingTasks bool
 	tasks         []*Task
 }
 
 type ProcessMessage struct {
-	Name          string                `json:"name"`
-	Namespace     string                `json:"namespace"`
-	Function      string                `json:"function"`
-	Version       string                `json:"version,omitempty"`
-	Alias         string                `json:"alias,omitempty"`
-	IP            string                `json:"ip"`
-	Port          int                   `json:"port"`
-	State         ProcessState          `json:"state"`
-	LastUpdate    time.Time             `json:"lastUpdate,omitempty"`
+	BaseProcess
 
-	TotalTasks    int                   `json:"totalTasks,omitempty"`
+	Tasks         []TaskMessage          `json:"tasks,omitempty"`
+	Jobs          map[string]JobShort    `json:"jobs,omitempty"`
+}
+
+type JobShort struct {
+	TotalTasks    int                   `json:"totalTasks"`
 	Metadata      interface{}           `json:"metadata,omitempty"`
-	Tasks         []Task                `json:"tasks,omitempty"`
+}
+
+func (p *ProcessMessage) Bind(r *http.Request) error {
+	return nil
 }
 
 func (p *ProcessMessage) Render(w http.ResponseWriter, r *http.Request) error {
@@ -102,7 +95,7 @@ func NewProcess(logger nuclio.Logger, context *ManagerContext, proc *Process) (*
 func ProcessKey(name,namespace string) string {return name+"."+namespace}
 
 func (p *Process) AsString() string {
-	return fmt.Sprintf("%s-%s:%s",p.Name,p.job.Name,p.tasks)
+	return fmt.Sprintf("%s-%s:%s",p.Name,p.State,p.tasks)
 }
 
 // force remove a process: mark its tasks unassigned, remove from job, rebalance (assign the tasks to other procs)
@@ -114,38 +107,16 @@ func (p *Process) Remove() error {
 		task.LastUpdate = time.Now()
 	}
 
-	if p.job == nil {
-		return nil
-	}
-
-	p.removingJob = true
-	delete(p.job.Processes, p.Name)
-	err := p.job.Rebalance()
-	p.job = nil
-	return err
-}
-
-// assign a process to a job
-func (p *Process) SetJob(job *Job) error {
-	if p.job != nil {
-		return fmt.Errorf("Process already assigned a job, use clear job method first")
-	}
-	p.job = job
-	job.Processes[p.Name] = p
+	p.removingTasks = true
 	return nil
 }
 
-// Request to stop all process tasks, clear Job assosiation if no tasks
-func (p *Process) ClearJob() error {
-	if p.job == nil {
-		return nil
-	}
+// Request to stop all process tasks
+func (p *Process) ClearTasks() error {
 	if len(p.tasks) == 0 {
-		delete(p.job.Processes, p.Name)
-		p.job = nil
 		return nil
 	}
-	p.removingJob = true
+	p.removingTasks = true
 
 	for _, task := range p.tasks {
 		task.State = TaskStateStopping
@@ -216,7 +187,7 @@ func (p *Process) PushUpdates() error {
 	request := client.ChanRequest{
 		Method: "POST",
 		HostURL: host,
-		Url: fmt.Sprintf("http://%s/events/%s", host, p.job.Name), //TODO: have proper URL
+		Url: fmt.Sprintf("http://%s/triggers", host), //TODO: have proper URL
 		Body: body,
 		NeedResp: false,
 		ReturnChan: p.ctx.ProcRespChannel,
@@ -236,12 +207,13 @@ func (p *Process) HandleUpdates(msg *ProcessMessage, isRequest bool) error {
 	// Update state of currently allocated tasks
 	for _, ctask := range msg.Tasks {
 		taskID := ctask.Id
-		if taskID >= p.job.TotalTasks {
+		job := p.deployment.jobs[ctask.Job]
+		if taskID >= job.TotalTasks {
 			// TODO: need to be in a log, not fail processing
-			return fmt.Errorf("illegal TaskID %d is greater than total %d",taskID,p.job.TotalTasks)
+			return fmt.Errorf("illegal TaskID %d is greater than total %d",taskID,job.TotalTasks)
 		}
 
-		jtask := p.job.GetTask(taskID)
+		jtask := job.tasks[taskID]
 		// TODO: verify the reporting process is the true owner of that task, we may have already re-alocated it
 		jtask.LastUpdate = time.Now()
 		jtask.CheckPoint = ctask.CheckPoint
@@ -258,7 +230,7 @@ func (p *Process) HandleUpdates(msg *ProcessMessage, isRequest bool) error {
 		case TaskStateCompleted:
 			if jtask.State != TaskStateCompleted {
 				// if this is the first time we get completion we add the task to completed list
-				p.job.CompletedTasks = append(p.job.CompletedTasks, taskID)
+				job.CompletedTasks = append(job.CompletedTasks, taskID)
 			}
 			jtask.State = ctask.State
 			p.RemoveTask(taskID)
@@ -278,8 +250,8 @@ func (p *Process) HandleUpdates(msg *ProcessMessage, isRequest bool) error {
 
 
 	// if it is a request from the process check if need to allocate tasks (will respond with updated task list)
-	if isRequest && !p.removingJob {
-		err := p.job.AllocateTasks(p)
+	if isRequest && !p.removingTasks {
+		err := p.deployment.AllocateTasks(p)
 		if err !=nil {
 			return errors.Wrap(err, "Failed to allocate tasks")
 		}
@@ -287,15 +259,10 @@ func (p *Process) HandleUpdates(msg *ProcessMessage, isRequest bool) error {
 
 	// if some tasks deleted (returned to pool) rebalance
 	if tasksDeleted {
-		p.job.Rebalance()    //TODO: verify no circular dep
+		p.deployment.Rebalance()    //TODO: verify no circular dep
 	}
 
-	// if in a state of removing job and all tasks removed clear job assosiation
-	if p.removingJob && len(p.tasks) == 0 {
-		delete(p.job.Processes, p.Name)
-		p.job = nil
-	}
-
+	// if in a state of removing tasks and all tasks removed clear job assosiation
 	return nil
 
 	// TODO: Save current state (checkpoints, completed list ..), or this can be done by the function processor?
@@ -304,34 +271,37 @@ func (p *Process) HandleUpdates(msg *ProcessMessage, isRequest bool) error {
 
 // return an enriched process struct for API
 func (p *Process) GetProcessState() *ProcessMessage  {
-	tasklist := []Task{}
-	for _, task := range p.tasks {
-		tasklist = append(tasklist, Task{Id:task.Id, State:task.State})
-	}
-
 	msg := ProcessMessage{}
 	msg.Name = p.Name
 	msg.Namespace = p.Namespace
 	msg.Function = p.Function
-	msg.Tasks = tasklist
-	if p.job != nil {
-		msg.TotalTasks = p.job.TotalTasks
-		msg.Metadata = p.job.Metadata
+	msg.Version  = p.Version
+	msg.Tasks = []TaskMessage{}
+	msg.Jobs = map[string]JobShort{}
+
+	for _, task := range p.tasks {
+		msg.Tasks = append(msg.Tasks, TaskMessage{BaseTask:task.BaseTask, Job:task.job.Name})
+		if _, ok := msg.Jobs[task.job.Name]; !ok {
+			msg.Jobs[task.job.Name] = JobShort{TotalTasks:task.job.TotalTasks, Metadata:task.job.Metadata}
+		}
 	}
+
 	return &msg
 }
 
 
 // emulate a process, may be broken
 func (p *Process) emulateProcess()  {
-	tasklist := []Task{}
+	tasklist := []TaskMessage{}
 	for _, task := range p.tasks {
+		taskmsg := TaskMessage{BaseTask:task.BaseTask, Job:task.job.Name}
 		switch task.State {
 		case TaskStateStopping:
-			tasklist = append(tasklist, Task{Id:task.Id, State:TaskStateDeleted})
+			taskmsg.State = TaskStateDeleted
 		default:
-			tasklist = append(tasklist, Task{Id:task.Id, State:TaskStateRunning})
+			taskmsg.State = TaskStateRunning
 		}
+		tasklist = append(tasklist, taskmsg)
 	}
 
 	msg := ProcessMessage{}

@@ -36,7 +36,6 @@ type JobsPortal struct {
 }
 
 func (jp *JobsPortal) getJob(w http.ResponseWriter, r *http.Request) {
-	//ctx := r.Context()
 	namespace := chi.URLParam(r, "namespace")
 	function := chi.URLParam(r, "function")
 	jobID := chi.URLParam(r, "jobID")
@@ -49,7 +48,7 @@ func (jp *JobsPortal) getJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := render.Render(w, r, &JobRequest{Job:job.(*jobs.Job)}); err != nil {
+	if err := render.Render(w, r, job.(*jobs.JobMessage)); err != nil {
 		render.Render(w, r, ErrRender(err))
 		return
 	}
@@ -85,8 +84,8 @@ func (jp *JobsPortal) listJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for _, j := range jobList.([]*jobs.Job) {
-		list = append(list, &JobRequest{Job:j})
+	for _, j := range jobList.([]*jobs.JobMessage) {
+		list = append(list, j)
 	}
 
 	if err := render.RenderList(w, r, list ); err != nil {
@@ -96,7 +95,7 @@ func (jp *JobsPortal) listJobs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (jp *JobsPortal) createJob(w http.ResponseWriter, r *http.Request) {
-	data := &JobRequest{}
+	data := &jobs.JobMessage{}
 	if err := render.Bind(r, data); err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
 		return
@@ -120,7 +119,7 @@ func (jp *JobsPortal) updateJob(w http.ResponseWriter, r *http.Request) {
 	function := chi.URLParam(r, "function")
 	jobID := chi.URLParam(r, "jobID")
 
-	data := &JobRequest{}
+	data := &jobs.JobMessage{}
 	if err := render.Bind(r, data); err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
 		return
@@ -134,38 +133,9 @@ func (jp *JobsPortal) updateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := render.Render(w, r, &JobRequest{Job:job.(*jobs.Job)}); err != nil {
+	if err := render.Render(w, r, &jobs.JobMessage{Job:job.(jobs.Job)}); err != nil {
 		render.Render(w, r, ErrRender(err))
 		return
 	}
-}
-
-
-type JobRequest struct {
-	*jobs.Job
-	Tasks  []JobTask  `json:"tasks"`
-
-}
-
-type JobTask struct {
-	Id      int      `json:"id"`
-	State   string   `json:"state"`
-	Process string   `json:"process"`
-}
-
-func (j *JobRequest) Bind(r *http.Request) error {
-	return nil
-}
-
-func (j *JobRequest) Render(w http.ResponseWriter, r *http.Request) error {
-	j.Tasks = []JobTask{}
-	for _, task := range j.Job.GetTasks() {
-		pname := ""
-		if task.GetProcess() != nil {
-			pname = task.GetProcess().Name
-		}
-		j.Tasks = append(j.Tasks, JobTask{Id:task.Id, State:jobs.StateNames[task.State], Process:pname} )
-	}
-	return nil
 }
 

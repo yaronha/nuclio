@@ -17,35 +17,8 @@ limitations under the License.
 package jobs
 
 import (
-	"time"
-	"net/http"
 	"github.com/nuclio/nuclio/pkg/dealer/client"
 )
-
-type ProcessUpdateMessage2 struct {
-	Name          string
-	Namespace     string
-	IP            string
-	Metrics       map[string]int
-	State         ProcessState
-	LastUpdate    time.Time
-	job           string
-	CurrentTasks  []Task
-}
-
-
-func (p *ProcessUpdateMessage2) Render(w http.ResponseWriter, r *http.Request) error {
-	return nil
-}
-
-type ProcessUpdateResp struct {
-	Name          string
-	Namespace     string
-	IP            string
-	job           string
-	DesiredState  ProcessState
-	Tasks         []Task
-}
 
 type ManagerContext struct {
 	RequestsChannel  chan *RequestMessage
@@ -62,8 +35,6 @@ func (mc *ManagerContext) SubmitReq(request *RequestMessage) (interface{}, error
 	return resp.Object, resp.Err
 	return nil, nil
 }
-
-
 
 type RequestType int
 
@@ -85,7 +56,6 @@ const (
 	RequestTypeDeployUpdate
 	RequestTypeDeployRemove
 	RequestTypeDeployList
-
 )
 
 type RespChanType struct {

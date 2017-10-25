@@ -82,8 +82,8 @@ func (pp *ProcPortal) listProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for _, p := range procList.([]*jobs.Process) {
-		list = append(list, &ProcessRequest{Process:p})
+	for _, p := range procList.([]*jobs.ProcessMessage) {
+		list = append(list, p)
 	}
 
 	if err := render.RenderList(w, r, list ); err != nil {
@@ -94,14 +94,14 @@ func (pp *ProcPortal) listProcess(w http.ResponseWriter, r *http.Request) {
 }
 
 func (pp *ProcPortal) createProcess(w http.ResponseWriter, r *http.Request) {
-	data := &ProcessRequest{}
+	data := &jobs.ProcessMessage{}
 	if err := render.Bind(r, data); err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
 		return
 	}
 
 	proc, err := pp.managerContext.SubmitReq(&jobs.RequestMessage{
-		Object:data.Process, Type:jobs.RequestTypeProcCreate})
+		Object: &data.BaseProcess, Type:jobs.RequestTypeProcCreate})
 
 	if err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
@@ -120,14 +120,14 @@ func (pp *ProcPortal) updateProcess(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 	procID := chi.URLParam(r, "procID")
 
-	data := &ProcessRequest{}
+	data := &jobs.ProcessMessage{}
 	if err := render.Bind(r, data); err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
 		return
 	}
 
 	proc, err := pp.managerContext.SubmitReq(&jobs.RequestMessage{
-		Name:procID, Namespace:namespace, Object:data.Process, Type:jobs.RequestTypeProcUpdate})
+		Name:procID, Namespace:namespace, Object:data.BaseProcess, Type:jobs.RequestTypeProcUpdate})
 
 	if err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
@@ -138,24 +138,6 @@ func (pp *ProcPortal) updateProcess(w http.ResponseWriter, r *http.Request) {
 		render.Render(w, r, ErrRender(err))
 		return
 	}
-}
-
-
-type ProcessRequest struct {
-	*jobs.Process
-	Tasks []jobs.Task
-}
-
-func (p *ProcessRequest) Bind(r *http.Request) error {
-	return nil
-}
-
-func (p *ProcessRequest) Render(w http.ResponseWriter, r *http.Request) error {
-	p.Tasks = []jobs.Task{}
-	for _, task := range p.Process.GetTasks(false) {
-		p.Tasks = append(p.Tasks, jobs.Task{Id:task.Id, State:task.State})
-	}
-	return nil
 }
 
 

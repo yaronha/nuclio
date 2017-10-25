@@ -38,14 +38,30 @@ var StateStrings = map[TaskState]string{TaskStateUnassigned:"-", TaskStateAlloc:
 var StateNames = map[TaskState]string{TaskStateUnassigned:"Unassigned", TaskStateAlloc:"Alloc", TaskStateRunning:"Running",
 	TaskStateStopping:"Stopping",TaskStateDeleted:"Deleted",TaskStateCompleted:"Completed"}
 
-type Task struct {
+type BaseTask struct {
 	Id          int             `json:"id"`
 	State       TaskState       `json:"state"`
 	CheckPoint  []byte          `json:"checkPoint,omitempty"`
 	Progress    int             `json:"progress,omitempty"`
 	Delay       int             `json:"delay,omitempty"`
+}
+
+
+type Task struct {
+	BaseTask
 	process     *Process
+	job         *Job
 	LastUpdate  time.Time       `json:"lastUpdate,omitempty"`
+}
+
+type TaskMessage struct {
+	BaseTask
+	Job         string          `json:"job"`
+	Process     string          `json:"process,omitempty"`
+}
+
+func NewTask(id int, job *Job) *Task {
+	return &Task{ BaseTask: BaseTask{Id:id}, job: job}
 }
 
 func (t *Task)String() string {

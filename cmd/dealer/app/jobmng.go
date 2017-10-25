@@ -116,7 +116,7 @@ func (jm *JobManager) Start() error {
 					if err != nil {
 						req.ReturnChan <- &jobs.RespChanType{ Err: err, Object: job}
 					} else {
-						err := jm.UpdateJob(job, req.Object.(*jobs.Job))
+						err := jm.UpdateJob(job, req.Object.(*jobs.JobMessage))
 						req.ReturnChan <- &jobs.RespChanType{Err: err, Object: job}
 					}
 
@@ -134,7 +134,8 @@ func (jm *JobManager) Start() error {
 					}
 
 				case jobs.RequestTypeProcCreate:
-					proc := req.Object.(*jobs.Process)
+					baseproc := req.Object.(*jobs.BaseProcess)
+					proc := &jobs.Process{BaseProcess: *baseproc}
 					err := jm.AddProcess(proc)
 					req.ReturnChan <- &jobs.RespChanType{
 						Err: err, Object: proc.GetProcessState()}
@@ -144,10 +145,10 @@ func (jm *JobManager) Start() error {
 					req.ReturnChan <- &jobs.RespChanType{Err: err}
 
 				case jobs.RequestTypeProcList:
-					list := []*jobs.Process{}
+					list := []*jobs.ProcessMessage{}
 					for _, p := range jm.Processes {
 						if req.Namespace == "" || req.Namespace == p.Namespace {
-							list = append(list, p)
+							list = append(list, p.GetProcessState())
 						}
 					}
 					req.ReturnChan <- &jobs.RespChanType{Err: nil, Object: list}
@@ -191,12 +192,12 @@ func (jm *JobManager) Start() error {
 }
 
 
-func (jm *JobManager) GetJob(namespace, function, name string) (*jobs.Job, error) {
+func (jm *JobManager) GetJob(namespace, function, name string) (*jobs.JobMessage, error) {
 	list := jm.DeployMap.ListJobs(namespace, function, "")
 
 	for _, job := range list {
 		if job.Name == name {
-			return job, nil
+			return job.GetJobState(), nil
 		}
 	}
 
@@ -230,11 +231,10 @@ func (jm *JobManager) RemoveJob(name, namespace string) error {
 }
 
 // TODO: change to update various runtime job params
-func (jm *JobManager) UpdateJob(oldJob, newjob *jobs.Job) error {
+func (jm *JobManager) UpdateJob(oldJob, newjob *jobs.JobMessage) error {
 
 	jm.logger.InfoWith("Update a job", "old", oldJob, "new", newjob)
 
-	oldJob.UpdateNumProcesses(newjob.ExpectedProc, true)
 	return nil
 }
 
@@ -272,6 +272,7 @@ func (jm *JobManager) RemoveProcess(name, namespace string) error {
 		return fmt.Errorf("Process %s not found", name)
 	}
 
+	// TODO: use DeploymentMap.RemoveProcess
 	err := proc.Remove()
 	if err != nil {
 		return err

@@ -22,7 +22,6 @@ import (
 	"os"
 	"github.com/nuclio/nuclio/cmd/dealer/app"
 	"github.com/nuclio/nuclio/pkg/dealer/portal"
-	"github.com/nuclio/nuclio/pkg/dealer/jobs"
 	"github.com/nuclio/nuclio-sdk"
 	"github.com/nuclio/nuclio/pkg/zap"
 	"github.com/pkg/errors"
@@ -85,7 +84,7 @@ func createLogger(verbose bool) (nuclio.Logger, error) {
 
 
 func Tests(jm *app.JobManager) {
-	jm.AddJob(&jobs.Job{Name:"myjob",FunctionURI:"f1",ExpectedProc:3, TotalTasks:11})
+	//jm.AddJob(&jobs.Job{Name:"myjob",FunctionURI:"f1",ExpectedProc:3, TotalTasks:11})
 	//jm.AddProcess(&jobs.Process{Name:"p1",Function:"f1",Version:"latest", IP:"192.168.1.133", Port:5000})
 	//fmt.Println(jm.Jobs["myjob.default"].AsString())
 	//jm.AddProcess(&jobs.Process{Name:"p2",Function:"f1",Version:"latest"})
