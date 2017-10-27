@@ -60,6 +60,7 @@ type Process struct {
 	tasks         []*Task
 }
 
+// Process request and response for the REST API
 type ProcessMessage struct {
 	BaseProcess
 
@@ -136,6 +137,16 @@ func (p *Process) GetTasks(active bool) []*Task {
 	return list
 }
 
+// return task based on Id and Job name
+func (p *Process) GetTask(job string, id int) *Task {
+	for _, task := range p.tasks {
+		if task.Id == id && task.job.Name == job {
+			return task
+		}
+	}
+	return nil
+}
+
 // add list of tasks to process
 func (p *Process) AddTasks(tasks []*Task) {
 	for _, task := range tasks {
@@ -148,15 +159,17 @@ func (p *Process) AddTasks(tasks []*Task) {
 
 }
 
-// remove specific task from proc
-func (p *Process) RemoveTask(id int) {
+// remove specific task from Process
+func (p *Process) RemoveTask(job string, id int) {
 	for i, task := range p.tasks {
-		if task.Id == id {
+		if task.Id == id && task.job.Name == job {
 			p.tasks = append(p.tasks[:i], p.tasks[i+1:]...)
+			return
 		}
 	}
 }
 
+// move N Tasks to state Stopping
 func (p *Process) StopNTasks(toDelete int) {
 	if toDelete <= 0 {
 		return
@@ -173,6 +186,8 @@ func (p *Process) StopNTasks(toDelete int) {
 // send updates to process
 func (p *Process) PushUpdates() error {
 	p.logger.DebugWith("Push updates to processor","processor",p.Name, "state", p.AsString())
+
+	// if process IP is unknown or unset return
 	if p.IP == "" {
 		return nil
 	}
@@ -223,7 +238,7 @@ func (p *Process) HandleUpdates(msg *ProcessMessage, isRequest bool) error {
 		switch ctask.State {
 		case TaskStateDeleted:
 			jtask.State = TaskStateUnassigned
-			p.RemoveTask(taskID)
+			p.RemoveTask(ctask.Job, taskID)
 			jtask.SetProcess(nil)
 			tasksDeleted = true
 		// TODO: find which process need to get more tasks and push an update
@@ -233,7 +248,7 @@ func (p *Process) HandleUpdates(msg *ProcessMessage, isRequest bool) error {
 				job.CompletedTasks = append(job.CompletedTasks, taskID)
 			}
 			jtask.State = ctask.State
-			p.RemoveTask(taskID)
+			p.RemoveTask(ctask.Job, taskID)
 			jtask.SetProcess(nil)
 		case TaskStateRunning:
 			// verify its a legal transition (e.g. we didnt ask to stop and got an old update)
@@ -271,11 +286,7 @@ func (p *Process) HandleUpdates(msg *ProcessMessage, isRequest bool) error {
 
 // return an enriched process struct for API
 func (p *Process) GetProcessState() *ProcessMessage  {
-	msg := ProcessMessage{}
-	msg.Name = p.Name
-	msg.Namespace = p.Namespace
-	msg.Function = p.Function
-	msg.Version  = p.Version
+	msg := ProcessMessage{BaseProcess: p.BaseProcess}
 	msg.Tasks = []TaskMessage{}
 	msg.Jobs = map[string]JobShort{}
 

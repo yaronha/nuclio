@@ -49,6 +49,7 @@ type Job struct {
 	tasks              []*Task
 }
 
+// Job request and response for the REST API
 type JobMessage struct {
 	Job
 	Tasks  []TaskMessage  `json:"tasks"`
@@ -87,17 +88,13 @@ func (j *Job) AsString() string {
 	return fmt.Sprintf("%s (%d): {Comp: %d} ",j.Name, j.TotalTasks, j.CompletedTasks)
 }
 
-// return list of job tasks
+// return Job message with list of job tasks
 func (j *Job) GetJobState() *JobMessage {
 	jobMessage := JobMessage{Job: *j}
 	jobMessage.Tasks = []TaskMessage{}
 
 	for _, task := range j.tasks {
-		pname := ""
-		if task.GetProcess() != nil {
-			pname = task.GetProcess().Name
-		}
-		jobMessage.Tasks = append(jobMessage.Tasks, TaskMessage{ BaseTask:task.BaseTask, Job:task.job.Name, Process:pname} )
+		jobMessage.Tasks = append(jobMessage.Tasks, task.ToMessage() )
 	}
 	return &jobMessage
 }

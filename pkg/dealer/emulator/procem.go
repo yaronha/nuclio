@@ -29,6 +29,7 @@ import (
 	"syscall"
 	"github.com/nuclio/nuclio/pkg/dealer/emulator/processor"
 	"encoding/json"
+	"github.com/nuclio/nuclio/pkg/dealer/jobs"
 )
 
 func main() {
@@ -38,7 +39,7 @@ func main() {
 	function := flag.String("f", "f1", "Function name")
 	version := flag.String("r", "latest", "Function version")
 	alias := flag.String("a", "", "Function alias")
-	url := flag.String("i", "localhost:3000", "Dealer ip:port")
+	url := flag.String("i", "", "Dealer ip:port")
 	port := flag.Int("p",5000,"local port")
 	verbose := flag.Bool("v", false, "Verbose")
 	flag.Parse()
@@ -49,8 +50,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	proc := processor.Process{Name:*name, Namespace:*ns, Function:*function, Version:*version, Alias:*alias, IP:ip, Port:*port}
 	logger, _ := createLogger(*verbose)
+	proc := jobs.Process{ BaseProcess: jobs.BaseProcess{Name:*name, Namespace:*ns, Function:*function, Version:*version, Alias:*alias, IP:ip, Port:*port}}
 
 	client, _ := client.NewContext(logger, *url)
 	headers := map[string]string{}
@@ -61,11 +62,13 @@ func main() {
 	}
 
 
-	path := fmt.Sprintf("http://%s/procs", *url)
-	_, err = client.SendRequest("POST", path, headers, body, false)
-	if err != nil {
-		fmt.Printf("Failed to send: %s", err)
-		os.Exit(1)
+	if *url != "" {
+		path := fmt.Sprintf("http://%s/procs", *url)
+		_, err = client.SendRequest("POST", path, headers, body, false)
+		if err != nil {
+			fmt.Printf("Failed to send: %s", err)
+			os.Exit(1)
+		}
 	}
 
 	c := make(chan os.Signal, 2)
@@ -73,8 +76,10 @@ func main() {
 	go func() {
 		<-c
 		fmt.Printf("Deleting Process %s\n", *name)
-		path := fmt.Sprintf("http://%s/procs/%s/%s", *url, *ns, *name)
-		client.SendRequest("DELETE", path, headers, body, false)
+		if *url != "" {
+			path := fmt.Sprintf("http://%s/procs/%s/%s", *url, *ns, *name)
+			client.SendRequest("DELETE", path, headers, body, false)
+		}
 		os.Exit(1)
 	}()
 
@@ -82,7 +87,7 @@ func main() {
 	newEmulator, _ := processor.NewProcessEmulator(logger, &proc)
 	err = newEmulator.Start()
 	if err != nil {
-		fmt.Printf("Failed to send: %s", err)
+		fmt.Printf("Failed to start emulator: %s", err)
 		os.Exit(1)
 	}
 

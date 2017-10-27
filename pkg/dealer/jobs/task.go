@@ -39,11 +39,31 @@ var StateNames = map[TaskState]string{TaskStateUnassigned:"Unassigned", TaskStat
 	TaskStateStopping:"Stopping",TaskStateDeleted:"Deleted",TaskStateCompleted:"Completed"}
 
 type BaseTask struct {
+	// Task index within the job
 	Id          int             `json:"id"`
+	// Current state of the task
 	State       TaskState       `json:"state"`
+	// Optional, Last checkpoint per task, e.g. the last stream pointer
+	// Checkpoint is periodically reported by the process and stored with the job state
+	// Checkpoint is provided to the process in case of task migration or restart after failure
+	// alternatively processes can store/read the checkpoint data directly to/from the job state record
 	CheckPoint  []byte          `json:"checkPoint,omitempty"`
+	// Optional, Amount of events processed reported by the process, for progress indication
 	Progress    int             `json:"progress,omitempty"`
+	// Optional, Number of events pending/dalayed reported by the process, for reporting & future dynamic load-balancing
 	Delay       int             `json:"delay,omitempty"`
+}
+
+
+// Task request and response for the REST API
+type TaskMessage struct {
+	BaseTask
+	Job         string          `json:"job"`
+	Process     string          `json:"process,omitempty"`
+}
+
+func (t *TaskMessage)Copy() TaskMessage {
+	return TaskMessage{ BaseTask:t.BaseTask, Job:t.Job, Process:t.Process}
 }
 
 
@@ -54,18 +74,20 @@ type Task struct {
 	LastUpdate  time.Time       `json:"lastUpdate,omitempty"`
 }
 
-type TaskMessage struct {
-	BaseTask
-	Job         string          `json:"job"`
-	Process     string          `json:"process,omitempty"`
-}
-
 func NewTask(id int, job *Job) *Task {
 	return &Task{ BaseTask: BaseTask{Id:id}, job: job}
 }
 
 func (t *Task)String() string {
 	return fmt.Sprintf("%d%s",t.Id,StateStrings[t.State])
+}
+
+func (t *Task)ToMessage() TaskMessage {
+	pname := ""
+	if t.process != nil {
+		pname = t.process.Name
+	}
+	return TaskMessage{ BaseTask:t.BaseTask, Job:t.job.Name, Process:pname}
 }
 
 func (t *Task)GetProcess() *Process {
@@ -75,5 +97,15 @@ func (t *Task)GetProcess() *Process {
 func (t *Task)SetProcess(proc *Process)  {
 	t.process = proc
 }
+
+func (t *Task)GetJob() *Job {
+	return t.job
+}
+
+func (t *Task)SetJob(job *Job)  {
+	t.job = job
+}
+
+
 
 
