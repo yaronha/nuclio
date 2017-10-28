@@ -76,6 +76,7 @@ func (jm *JobManager) SubmitReq(request *jobs.RequestMessage) (interface{}, erro
 func (jm *JobManager) Start() error {
 
 	// TODO: need a go routine that verify periodically PODs are up (check last update time and just verify old ones)
+	// can also use POD watch (periodic) & POD ready hook
 
 	err := jm.asyncClient.Start()
 	if err != nil {
@@ -94,29 +95,29 @@ func (jm *JobManager) Start() error {
 				jm.logger.DebugWith("Got chan request", "type", req.Type, "name", req.Name, "namespace", req.Namespace)
 				switch req.Type {
 				case jobs.RequestTypeJobGet:
-					job, err := jm.GetJob(req.Namespace, req.Function, req.Name)
+					job, err := jm.getJob(req.Namespace, req.Function, req.Name)
 					req.ReturnChan <- &jobs.RespChanType{Err: err, Object: job}
 
 				case jobs.RequestTypeJobCreate:
 					job := req.Object.(*jobs.Job)
-					err := jm.AddJob(job)
-					req.ReturnChan <- &jobs.RespChanType{Err: err, Object: job}
+					newJob, err := jm.addJob(job)
+					req.ReturnChan <- &jobs.RespChanType{Err: err, Object: newJob}
 
 				case jobs.RequestTypeJobDel:
-					err := jm.RemoveJob(req.Name, req.Namespace)
+					err := jm.removeJob(req.Name, req.Namespace)
 					req.ReturnChan <- &jobs.RespChanType{Err: err}
 
 				case jobs.RequestTypeJobList:
-					list := jm.DeployMap.ListJobs(req.Namespace,req.Function, "")
+					list := jm.listJobs(req.Namespace,req.Function, "")
 					req.ReturnChan <- &jobs.RespChanType{Err: nil, Object: list}
 
 				case jobs.RequestTypeJobUpdate:
 					// TODO: consider what need to allow in update
-					job, err := jm.GetJob(req.Namespace, req.Function, req.Name)
+					job, err := jm.getJob(req.Namespace, req.Function, req.Name)
 					if err != nil {
 						req.ReturnChan <- &jobs.RespChanType{ Err: err, Object: job}
 					} else {
-						err := jm.UpdateJob(job, req.Object.(*jobs.JobMessage))
+						err := jm.updateJob(job, req.Object.(*jobs.JobMessage))
 						req.ReturnChan <- &jobs.RespChanType{Err: err, Object: job}
 					}
 
@@ -133,15 +134,23 @@ func (jm *JobManager) Start() error {
 							Err: nil, Object: proc.GetProcessState()}
 					}
 
-				case jobs.RequestTypeProcCreate:
-					baseproc := req.Object.(*jobs.BaseProcess)
-					proc := &jobs.Process{BaseProcess: *baseproc}
-					err := jm.AddProcess(proc)
+				case jobs.RequestTypeProcUpdate:
+					procMsg := req.Object.(*jobs.ProcessMessage)
+					proc, err := jm.updateProcess(procMsg)
 					req.ReturnChan <- &jobs.RespChanType{
-						Err: err, Object: proc.GetProcessState()}
+						Err: err,
+						Object: proc,
+					}
+
+				// process POD watch updates to figure out if process is ready
+				case jobs.RequestTypeProcUpdateState:
+					proc := req.Object.(*jobs.BaseProcess)
+					err := jm.updateProcessState(proc)
+					req.ReturnChan <- &jobs.RespChanType{
+						Err: err, Object: nil}
 
 				case jobs.RequestTypeProcDel:
-					err := jm.RemoveProcess(req.Name, req.Namespace)
+					err := jm.removeProcess(req.Name, req.Namespace)
 					req.ReturnChan <- &jobs.RespChanType{Err: err}
 
 				case jobs.RequestTypeProcList:
@@ -153,38 +162,25 @@ func (jm *JobManager) Start() error {
 					}
 					req.ReturnChan <- &jobs.RespChanType{Err: nil, Object: list}
 
-				case jobs.RequestTypeProcUpdate:
-					proc, ok := jm.Processes[jobs.ProcessKey(req.Name,req.Namespace)]
-					if !ok {
-						req.ReturnChan <- &jobs.RespChanType{
-							Err: fmt.Errorf("Process %s not found", req.Name),
-							Object: proc,
-						}
-					} else {
-						err := jm.UpdateProcess(proc, req.Object.(*jobs.ProcessMessage))
-						req.ReturnChan <- &jobs.RespChanType{
-							Err: err, Object: proc.GetProcessState()}
-					}
-
 
 				case jobs.RequestTypeDeployUpdate:
 					dep := req.Object.(*jobs.Deployment)
 					err := jm.DeployMap.UpdateDeployment(dep)
 					req.ReturnChan <- &jobs.RespChanType{
-						Err: err, Object: dep}
+						Err: err, Object: dep.GetDeploymentState()}
 
 				case jobs.RequestTypeDeployList:
-					req.ReturnChan <- &jobs.RespChanType{
-						Err: nil, Object: jm.DeployMap.GetAllDeployments(req.Namespace, req.Name)}
+					depList := []*jobs.DeploymentMessage{}
+					deps := jm.DeployMap.GetAllDeployments(req.Namespace, req.Name, "")
 
+					for _, dep := range deps {
+						depList = append(depList, dep.GetDeploymentState())
+					}
+					req.ReturnChan <- &jobs.RespChanType{
+						Err: nil, Object: depList}
 
 				}
-
-
 			}
-
-
-
 		}
 	}()
 
@@ -192,8 +188,8 @@ func (jm *JobManager) Start() error {
 }
 
 
-func (jm *JobManager) GetJob(namespace, function, name string) (*jobs.JobMessage, error) {
-	list := jm.DeployMap.ListJobs(namespace, function, "")
+func (jm *JobManager) getJob(namespace, function, name string) (*jobs.JobMessage, error) {
+	list := jm.listJobs(namespace, function, "")
 
 	for _, job := range list {
 		if job.Name == name {
@@ -204,26 +200,44 @@ func (jm *JobManager) GetJob(namespace, function, name string) (*jobs.JobMessage
 	return nil, fmt.Errorf("Job %s %s %s not found", namespace, function, name)
 }
 
+// List jobs assigned to namespace/function, all if no version specified or by version
+func (jm *JobManager) listJobs(namespace, function, version string) []*jobs.JobMessage {
+	list := []*jobs.JobMessage{}
+
+	deps := jm.DeployMap.GetAllDeployments(namespace, function, version)
+	for _, dep := range deps {
+		for _, job := range dep.GetJobs() {
+			list = append(list, job.GetJobState())
+		}
+	}
+
+	return list
+}
+
 // TODO: add job before/after deployment was created
-func (jm *JobManager) AddJob(job *jobs.Job) error {
+func (jm *JobManager) addJob(job *jobs.Job) (*jobs.JobMessage, error) {
 
 	jm.logger.InfoWith("Adding new job", "job", job)
-
-	job, err := jobs.NewJob(&jm.Ctx, job)
-	if err != nil {
-		return errors.Wrap(err, "Failed to add job")
+	dep := jm.DeployMap.FindDeployment(job.Namespace, job.Function, job.Version, true)
+	if dep == nil {
+		return nil, fmt.Errorf("Deployment %s %s %s not found, cannot add a job", job.Namespace, job.Function, job.Version)
 	}
 
-	err = jm.DeployMap.JobRequest(job)
+	newJob, err := jobs.NewJob(&jm.Ctx, job)
 	if err != nil {
-		return errors.Wrap(err, "Failed to add job to deploymap")
+		return nil, errors.Wrap(err, "Failed to create a new job")
 	}
 
-	return nil
+	err = dep.AddJob(newJob)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to add job to deployment")
+	}
+
+	return newJob.GetJobState(), nil
 }
 
 // TODO: change to dep jobs
-func (jm *JobManager) RemoveJob(name, namespace string) error {
+func (jm *JobManager) removeJob(name, namespace string) error {
 
 	jm.logger.InfoWith("Removing a job", "name", name, "namespace", namespace)
 
@@ -231,7 +245,7 @@ func (jm *JobManager) RemoveJob(name, namespace string) error {
 }
 
 // TODO: change to update various runtime job params
-func (jm *JobManager) UpdateJob(oldJob, newjob *jobs.JobMessage) error {
+func (jm *JobManager) updateJob(oldJob, newjob *jobs.JobMessage) error {
 
 	jm.logger.InfoWith("Update a job", "old", oldJob, "new", newjob)
 
@@ -239,53 +253,75 @@ func (jm *JobManager) UpdateJob(oldJob, newjob *jobs.JobMessage) error {
 }
 
 
-// TODO: diff or merge between POD add/update to process request update
-func (jm *JobManager) AddProcess(proc *jobs.Process) error {
-
-	jm.logger.InfoWith("Adding new process", "process", proc)
-
-	proc, err := jobs.NewProcess(jm.logger, &jm.Ctx, proc)
-	if err != nil {
-		return err
-	}
-
-	key := jobs.ProcessKey(proc.Name,proc.Namespace)
-	if _, ok := jm.Processes[key]; ok {
-		return fmt.Errorf("Process %s already exist", key)
-	}
-
-	jm.Processes[key] = proc
-	err = jm.DeployMap.UpdateProcess(proc)
-	if err != nil {
-		return errors.Wrap(err, "Failed to add process to deploymap")
-	}
-
-	return nil
-}
-
-func (jm *JobManager) RemoveProcess(name, namespace string) error {
+func (jm *JobManager) removeProcess(name, namespace string) error {
 
 	jm.logger.InfoWith("Removing a process", "name", name, "namespace", namespace)
+	key := jobs.ProcessKey(name,namespace)
 
-	proc, ok := jm.Processes[jobs.ProcessKey(name, namespace)]
+	proc, ok := jm.Processes[key]
 	if !ok {
 		return fmt.Errorf("Process %s not found", name)
 	}
 
-	// TODO: use DeploymentMap.RemoveProcess
-	err := proc.Remove()
+	dep := proc.GetDeployment()
+	err := dep.RemoveProcess(proc)
 	if err != nil {
 		return err
 	}
-	delete(jm.Processes, jobs.ProcessKey(name, namespace))
+	delete(jm.Processes, key)
 	return nil
 }
 
-func (jm *JobManager) UpdateProcess(oldProc *jobs.Process, newProc *jobs.ProcessMessage) error {
+// TODO: updateProcessState
+func (jm *JobManager) updateProcessState(proc *jobs.BaseProcess) error {
 
-	jm.logger.InfoWith("Update a process", "old", oldProc, "new", newProc)
-
-	return oldProc.HandleUpdates(newProc, true)
-
+	return nil
 }
 
+
+func (jm *JobManager) updateProcess(procMsg *jobs.ProcessMessage) (*jobs.ProcessMessage, error) {
+
+	key := jobs.ProcessKey(procMsg.Name,procMsg.Namespace)
+	proc, ok := jm.Processes[key]
+
+	if !ok {
+		jm.logger.InfoWith("Adding new process", "process", procMsg)
+
+		dep := jm.DeployMap.FindDeployment(procMsg.Namespace, procMsg.Function, procMsg.Version, false)
+		if dep == nil {
+			// TODO: may have a case where the deployment update is delayed, and need to init a dummy deploy
+			jm.logger.ErrorWith("Deployment wasnt found in process update",
+				"namespace", procMsg.Namespace, "function", procMsg.Function, "version", procMsg.Version)
+			return nil, fmt.Errorf("Failed to add process, deployment %s %s %s not found", procMsg.Namespace, procMsg.Function, procMsg.Version)
+		}
+
+		proc, err := jobs.NewProcess(jm.logger, &jm.Ctx, procMsg)
+		if err != nil {
+			return nil, err
+		}
+
+		jm.Processes[key] = proc
+		dep.AddProcess(proc)
+
+		// TODO: check process state (ready)
+		if dep.ExpectedProc > len(dep.GetProcs()) {
+			err := dep.AllocateTasks(proc)
+			if err != nil {
+				jm.logger.ErrorWith("Failed to allocate jobtasks to proc", "deploy", dep.Name, "proc", proc.Name, "err", err)
+			}
+			return proc.GetProcessState(), nil
+		}
+	}
+
+
+	jm.logger.InfoWith("Update a process", "old", proc, "new", procMsg)
+	err := proc.HandleUpdates(procMsg, true)
+	if err != nil {
+		return nil, err
+	}
+
+	return proc.GetProcessState(), nil
+}
+
+
+// TODO: update process state (POD updates)

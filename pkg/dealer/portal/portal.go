@@ -72,14 +72,14 @@ func (d *DealerPortal) Start() error {
 
 	r.Route("/procs", func(r chi.Router) {
 		r.Get("/", procPortal.listProcess)
-		r.Post("/", procPortal.createProcess)
+		r.Post("/", procPortal.updateProcess)
+		r.Put("/", procPortal.updateProcessState)
 		// Subrouters:
 
 		r.Route("/{namespace}", func(r chi.Router) {
 			r.Get("/", procPortal.listProcess)
 			r.Route("/{procID}", func(r chi.Router) {
 				r.Get("/", procPortal.getProcess)
-				r.Put("/", procPortal.updateProcess)
 				r.Delete("/", procPortal.deleteProcess)
 			})
 		})
@@ -102,7 +102,7 @@ func (d *DealerPortal) updateDeployment(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	proc, err := d.managerContext.SubmitReq(&jobs.RequestMessage{
+	dep, err := d.managerContext.SubmitReq(&jobs.RequestMessage{
 		Object:data.Deployment, Type:jobs.RequestTypeDeployUpdate})
 
 	if err != nil {
@@ -110,7 +110,7 @@ func (d *DealerPortal) updateDeployment(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := render.Render(w, r, &DeployResp{ Deployment: proc.(*jobs.Deployment)}); err != nil {
+	if err := render.Render(w, r, dep.(*jobs.DeploymentMessage)); err != nil {
 		render.Render(w, r, ErrRender(err))
 		return
 	}
@@ -129,8 +129,8 @@ func (jp *DealerPortal) listDeployments(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	for _, d := range depList.([]*jobs.Deployment) {
-		list = append(list, &DeployResp{Deployment:d})
+	for _, dep := range depList.([]*jobs.DeploymentMessage) {
+		list = append(list, dep)
 	}
 
 	if err := render.RenderList(w, r, list ); err != nil {
@@ -150,28 +150,6 @@ func (d *DeployRequest) Bind(r *http.Request) error {
 }
 
 func (d *DeployRequest) Render(w http.ResponseWriter, r *http.Request) error {
-	return nil
-}
-
-type DeployResp struct {
-	*jobs.Deployment
-	Processes []string
-	Jobs []string
-}
-
-func (d *DeployResp) Bind(r *http.Request) error {
-	return nil
-}
-
-func (d *DeployResp) Render(w http.ResponseWriter, r *http.Request) error {
-	d.Processes = []string{}
-	d.Jobs = []string{}
-	for name, _ := range d.GetProcs() {
-		d.Processes = append(d.Processes, name)
-	}
-	for name, _ := range d.GetJobs() {
-		d.Jobs = append(d.Jobs, name)
-	}
 	return nil
 }
 

@@ -29,7 +29,7 @@ import (
 type ProcessState int8
 
 const (
-	ProcessStateUnkown    ProcessState = 0
+	ProcessStateUnknown   ProcessState = 0
 	ProcessStateReady     ProcessState = 1
 	ProcessStateNotReady  ProcessState = 2
 	ProcessStateDelete    ProcessState = 3
@@ -68,6 +68,7 @@ type ProcessMessage struct {
 	Jobs          map[string]JobShort    `json:"jobs,omitempty"`
 }
 
+// TODO: should be aligned with Event definition struct
 type JobShort struct {
 	TotalTasks    int                   `json:"totalTasks"`
 	Metadata      interface{}           `json:"metadata,omitempty"`
@@ -83,7 +84,8 @@ func (p *ProcessMessage) Render(w http.ResponseWriter, r *http.Request) error {
 
 
 
-func NewProcess(logger nuclio.Logger, context *ManagerContext, proc *Process) (*Process, error) {
+func NewProcess(logger nuclio.Logger, context *ManagerContext, newProc *ProcessMessage) (*Process, error) {
+	proc := &Process{BaseProcess: newProc.BaseProcess}
 	if proc.Namespace == "" {
 		proc.Namespace = "default"
 	}
@@ -97,6 +99,10 @@ func ProcessKey(name,namespace string) string {return name+"."+namespace}
 
 func (p *Process) AsString() string {
 	return fmt.Sprintf("%s-%s:%s",p.Name,p.State,p.tasks)
+}
+
+func (p *Process) GetDeployment() *Deployment {
+	return p.deployment
 }
 
 // force remove a process: mark its tasks unassigned, remove from job, rebalance (assign the tasks to other procs)
@@ -185,9 +191,9 @@ func (p *Process) StopNTasks(toDelete int) {
 
 // send updates to process
 func (p *Process) PushUpdates() error {
-	p.logger.DebugWith("Push updates to processor","processor",p.Name, "state", p.AsString())
 
-	// if process IP is unknown or unset return
+	p.logger.DebugWith("Push updates to processor","processor",p.Name, "state", p.AsString())
+	// if process IP is unknown or unset return without sending
 	if p.IP == "" {
 		return nil
 	}
@@ -218,56 +224,85 @@ func (p *Process) HandleUpdates(msg *ProcessMessage, isRequest bool) error {
 
 	p.LastUpdate = time.Now()
 	tasksDeleted := false
+	hadTaskError := false
+	jobsToSave := map[string]*Job{}
 
 	// Update state of currently allocated tasks
-	for _, ctask := range msg.Tasks {
-		taskID := ctask.Id
-		job := p.deployment.jobs[ctask.Job]
+	for _, msgTask := range msg.Tasks {
+		taskID := msgTask.Id
+		job, ok := p.deployment.jobs[msgTask.Job]
+		if !ok {
+			p.logger.ErrorWith("Task job (name) not found under deployment","processor",p.Name, "task", taskID, "job", msgTask.Job)
+			hadTaskError = true
+			continue
+		}
 		if taskID >= job.TotalTasks {
-			// TODO: need to be in a log, not fail processing
-			return fmt.Errorf("illegal TaskID %d is greater than total %d",taskID,job.TotalTasks)
+			p.logger.ErrorWith("Illegal TaskID, greater than total tasks #","processor",p.Name, "task", taskID, "job", msgTask.Job)
+			hadTaskError = true
+			continue
 		}
 
-		jtask := job.tasks[taskID]
-		// TODO: verify the reporting process is the true owner of that task, we may have already re-alocated it
-		jtask.LastUpdate = time.Now()
-		jtask.CheckPoint = ctask.CheckPoint
-		jtask.Progress = ctask.Progress
-		jtask.Delay = ctask.Delay
+		task := job.tasks[taskID]
+		// verify the reporting process is the true owner of that task, we may have already re-alocated it
+		if task.process == nil || task.process.Name != p.Name {
+			p.logger.ErrorWith("Task process is null or mapped to a different process","processor",p.Name, "task", taskID, "job", msgTask.Job)
+			hadTaskError = true
+			continue
+		}
 
-		switch ctask.State {
+		// Do we need to persist job metadata ?
+		if task.CheckPoint != nil && !job.NeedToSave() {
+				jobsToSave[job.Name] = job
+		}
+
+		task.LastUpdate = time.Now()
+		task.CheckPoint = msgTask.CheckPoint
+		task.Progress = msgTask.Progress
+		task.Delay = msgTask.Delay
+
+		switch msgTask.State {
 		case TaskStateDeleted:
-			jtask.State = TaskStateUnassigned
-			p.RemoveTask(ctask.Job, taskID)
-			jtask.SetProcess(nil)
+			task.State = TaskStateUnassigned
+			p.RemoveTask(msgTask.Job, taskID)
+			task.SetProcess(nil)
 			tasksDeleted = true
-		// TODO: find which process need to get more tasks and push an update
 		case TaskStateCompleted:
-			if jtask.State != TaskStateCompleted {
-				// if this is the first time we get completion we add the task to completed list
+			if task.State != TaskStateCompleted {
+				// if this is the first time we get completion we add the task to completed and save list
 				job.CompletedTasks = append(job.CompletedTasks, taskID)
+				if !job.NeedToSave() {
+					jobsToSave[job.Name] = job
+				}
 			}
-			jtask.State = ctask.State
-			p.RemoveTask(ctask.Job, taskID)
-			jtask.SetProcess(nil)
+			task.State = msgTask.State
+			p.RemoveTask(msgTask.Job, taskID)
+			task.SetProcess(nil)
 		case TaskStateRunning:
 			// verify its a legal transition (e.g. we didnt ask to stop and got an old update)
-			if jtask.State == TaskStateRunning || jtask.State == TaskStateAlloc {
-				jtask.State = ctask.State
+			if task.State == TaskStateRunning || task.State == TaskStateAlloc {
+				task.State = msgTask.State
 			}
 		default:
-			// TODO: need to be in a log, not fail processing
-			return fmt.Errorf("illegal returned state in task ID %d, %s",taskID, ctask.State)
+			p.logger.ErrorWith("illegal returned state in task ID","processor",p.Name, "task", taskID, "job", msgTask.Job, "state", msgTask.State)
+			hadTaskError = true
+			continue
 		}
 
 	}
 
 
+	if hadTaskError {
+		return fmt.Errorf("Error(s) in task processing, check log")
+	}
+
+	// persist critical changes (completions and checkpoints)
+	p.ctx.SaveJobs(jobsToSave)
 
 	// if it is a request from the process check if need to allocate tasks (will respond with updated task list)
 	if isRequest && !p.removingTasks {
 		err := p.deployment.AllocateTasks(p)
 		if err !=nil {
+			p.logger.ErrorWith("Failed to allocate tasks", "processor",p.Name)
 			return errors.Wrap(err, "Failed to allocate tasks")
 		}
 	}
@@ -277,10 +312,7 @@ func (p *Process) HandleUpdates(msg *ProcessMessage, isRequest bool) error {
 		p.deployment.Rebalance()    //TODO: verify no circular dep
 	}
 
-	// if in a state of removing tasks and all tasks removed clear job assosiation
 	return nil
-
-	// TODO: Save current state (checkpoints, completed list ..), or this can be done by the function processor?
 
 }
 
@@ -301,7 +333,7 @@ func (p *Process) GetProcessState() *ProcessMessage  {
 }
 
 
-// emulate a process, may be broken
+// emulate a process locally, unused, may be broken
 func (p *Process) emulateProcess()  {
 	tasklist := []TaskMessage{}
 	for _, task := range p.tasks {

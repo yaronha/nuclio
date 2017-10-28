@@ -43,6 +43,8 @@ type Job struct {
 	CompletedTasks     []int                 `json:"completedTasks,omitempty"`
 	// Job can spawn multiple versions (e.g. Canary Deployment)
 	IsMultiVersion     bool                  `json:"isMultiVersion,omitempty"`
+	// Job need to be saved to persistent storage
+	markedDirty        bool
 	// Private Job Metadata, will be passed to the processor as is
 	Metadata           interface{}           `json:"metadata,omitempty"`
 
@@ -118,3 +120,16 @@ func (j *Job) findUnallocTask(num int, from *int) []*Task {
 	return list
 }
 
+// Mark the job as dirty (need saving), return true if it was already dirty
+func (j *Job) NeedToSave() bool {
+	val := j.markedDirty
+	j.markedDirty = true
+	return val
+}
+
+func (j *Job) Stop(force bool) error {
+
+	// TODO: stop all tasks (in multiple processes)
+
+	return nil
+}

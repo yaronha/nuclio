@@ -93,7 +93,7 @@ func (pp *ProcPortal) listProcess(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func (pp *ProcPortal) createProcess(w http.ResponseWriter, r *http.Request) {
+func (pp *ProcPortal) updateProcess(w http.ResponseWriter, r *http.Request) {
 	data := &jobs.ProcessMessage{}
 	if err := render.Bind(r, data); err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
@@ -101,24 +101,21 @@ func (pp *ProcPortal) createProcess(w http.ResponseWriter, r *http.Request) {
 	}
 
 	proc, err := pp.managerContext.SubmitReq(&jobs.RequestMessage{
-		Object: &data.BaseProcess, Type:jobs.RequestTypeProcCreate})
+		Object: data, Type:jobs.RequestTypeProcUpdate})
 
 	if err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
 		return
 	}
 
-	render.Status(r, http.StatusCreated)
+	render.Status(r, http.StatusAccepted)
 	if err := render.Render(w, r, proc.(*jobs.ProcessMessage)); err != nil {
 		render.Render(w, r, ErrRender(err))
 		return
 	}
 }
 
-func (pp *ProcPortal) updateProcess(w http.ResponseWriter, r *http.Request) {
-
-	namespace := chi.URLParam(r, "namespace")
-	procID := chi.URLParam(r, "procID")
+func (pp *ProcPortal) updateProcessState(w http.ResponseWriter, r *http.Request) {
 
 	data := &jobs.ProcessMessage{}
 	if err := render.Bind(r, data); err != nil {
@@ -126,18 +123,15 @@ func (pp *ProcPortal) updateProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	proc, err := pp.managerContext.SubmitReq(&jobs.RequestMessage{
-		Name:procID, Namespace:namespace, Object:data.BaseProcess, Type:jobs.RequestTypeProcUpdate})
+	_, err := pp.managerContext.SubmitReq(&jobs.RequestMessage{
+		Object:data.BaseProcess, Type:jobs.RequestTypeProcUpdateState})
 
 	if err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
 		return
 	}
 
-	if err := render.Render(w, r, proc.(*jobs.ProcessMessage)); err != nil {
-		render.Render(w, r, ErrRender(err))
-		return
-	}
+	render.Status(r, http.StatusAccepted)
 }
 
 

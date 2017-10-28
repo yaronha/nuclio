@@ -36,6 +36,14 @@ func (mc *ManagerContext) SubmitReq(request *RequestMessage) (interface{}, error
 	return nil, nil
 }
 
+func (mc *ManagerContext) SaveJobs(jobs map[string]*Job) {
+	if len(jobs) == 0 {
+		return
+	}
+
+	// TODO: save jobs state to persistent storage
+}
+
 type RequestType int
 
 const (
@@ -50,7 +58,7 @@ const (
 	RequestTypeProcGet
 	RequestTypeProcDel
 	RequestTypeProcList
-	RequestTypeProcCreate
+	RequestTypeProcUpdateState
 	RequestTypeProcUpdate
 
 	RequestTypeDeployUpdate
