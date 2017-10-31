@@ -61,11 +61,14 @@ func (d *DealerPortal) Start() error {
 		// TODO: add func level
 		r.Route("/{namespace}", func(r chi.Router) {
 			r.Get("/", jobsPortal.listJobs)
-			r.Route("/{jobID}", func(r chi.Router) {
-				//r.Use(jobsPortal.JobCtx)
-				r.Get("/", jobsPortal.getJob)
-				r.Put("/", jobsPortal.updateJob)
-				r.Delete("/", jobsPortal.deleteJob)
+			r.Route("/{function}", func(r chi.Router) {
+				r.Get("/", jobsPortal.listJobs)
+
+				r.Route("/{jobID}", func(r chi.Router) {
+					r.Get("/", jobsPortal.getJob)
+					r.Put("/", jobsPortal.updateJob)
+					r.Delete("/", jobsPortal.deleteJob)
+				})
 			})
 		})
 	})
@@ -78,6 +81,7 @@ func (d *DealerPortal) Start() error {
 
 		r.Route("/{namespace}", func(r chi.Router) {
 			r.Get("/", procPortal.listProcess)
+
 			r.Route("/{procID}", func(r chi.Router) {
 				r.Get("/", procPortal.getProcess)
 				r.Delete("/", procPortal.deleteProcess)
@@ -88,6 +92,15 @@ func (d *DealerPortal) Start() error {
 	r.Route("/deploy", func(r chi.Router) {
 		r.Post("/", d.updateDeployment)
 		r.Get("/", d.listDeployments)
+
+		r.Route("/{namespace}", func(r chi.Router) {
+			r.Get("/", d.listDeployments)
+
+			r.Route("/{function}", func(r chi.Router) {
+				r.Get("/", d.listDeployments)
+			})
+		})
+
 	})
 
 	fmt.Printf("Starting Dealer Portal in port: %d\n", d.port)
@@ -118,11 +131,11 @@ func (d *DealerPortal) updateDeployment(w http.ResponseWriter, r *http.Request) 
 
 func (jp *DealerPortal) listDeployments(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
-	name := chi.URLParam(r, "function")
+	function := chi.URLParam(r, "function")
 	list := []render.Renderer{}
 
-	depList, err := jp.managerContext.SubmitReq(&jobs.RequestMessage{ Name:name,
-		Namespace:namespace, Type:jobs.RequestTypeDeployList})
+	depList, err := jp.managerContext.SubmitReq(&jobs.RequestMessage{
+		Namespace:namespace, Function: function, Type:jobs.RequestTypeDeployList})
 
 	if err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))

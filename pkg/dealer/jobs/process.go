@@ -243,8 +243,11 @@ func (p *Process) HandleUpdates(msg *ProcessMessage, isRequest bool) error {
 		}
 
 		task := job.tasks[taskID]
+
+		// TODO: if task.process = nil, after dealer restart, we need to assign this task to the process
+
 		// verify the reporting process is the true owner of that task, we may have already re-alocated it
-		if task.process == nil || task.process.Name != p.Name {
+		if task.process != nil && task.process.Name != p.Name {
 			p.logger.ErrorWith("Task process is null or mapped to a different process","processor",p.Name, "task", taskID, "job", msgTask.Job)
 			hadTaskError = true
 			continue

@@ -171,7 +171,7 @@ func (jm *JobManager) Start() error {
 
 				case jobs.RequestTypeDeployList:
 					depList := []*jobs.DeploymentMessage{}
-					deps := jm.DeployMap.GetAllDeployments(req.Namespace, req.Name, "")
+					deps := jm.DeployMap.GetAllDeployments(req.Namespace, req.Function, "")
 
 					for _, dep := range deps {
 						depList = append(depList, dep.GetDeploymentState())
