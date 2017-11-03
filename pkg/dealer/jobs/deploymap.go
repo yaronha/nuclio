@@ -6,14 +6,14 @@ import (
 )
 
 type DeploymentMap struct {
-	Deployments   map[string][]*Deployment
+	deployments   map[string][]*Deployment
 	logger        nuclio.Logger
 	ctx           *ManagerContext
 }
 
 func NewDeploymentMap(logger nuclio.Logger, context *ManagerContext) (*DeploymentMap, error) {
 	newDeploymentMap := DeploymentMap{logger:logger, ctx:context}
-	newDeploymentMap.Deployments = map[string][]*Deployment{}
+	newDeploymentMap.deployments = map[string][]*Deployment{}
 	return &newDeploymentMap, nil
 }
 
@@ -34,7 +34,7 @@ func (dm *DeploymentMap) UpdateDeployment(deployment *Deployment) error {
 
 	// find the deployment list for the desired namespace/function (w/o version)
 	key := deployment.Namespace + "." + deployment.Function
-	list, ok := dm.Deployments[key]
+	list, ok := dm.deployments[key]
 	if !ok {
 		// if not found create a new deployment list
 		dep := dm.NewDeployment(deployment)
@@ -45,7 +45,7 @@ func (dm *DeploymentMap) UpdateDeployment(deployment *Deployment) error {
 		}
 
 		newList := []*Deployment{dep}
-		dm.Deployments[key] = newList
+		dm.deployments[key] = newList
 		return nil
 	}
 
@@ -97,7 +97,7 @@ func (dm *DeploymentMap) UpdateDeployment(deployment *Deployment) error {
 		dm.logger.ErrorWith("Failed to update jobs in deployment", "deploy", dep.Name, "err", err)
 		return err
 	}
-	dm.Deployments[key] = append(dm.Deployments[key], dep)
+	dm.deployments[key] = append(dm.deployments[key], dep)
 	return nil
 }
 
@@ -105,7 +105,7 @@ func (dm *DeploymentMap) UpdateDeployment(deployment *Deployment) error {
 // return a filtered list of deployments (for portal)
 func (dm *DeploymentMap) GetAllDeployments(namespace, function, version string) []*Deployment {
 	list := []*Deployment{}
-	for key, deps := range dm.Deployments {
+	for key, deps := range dm.deployments {
 		split := strings.Split(key, ".")
 		// TODO: filter by function , if both ns & function direct lookup deps
 		if namespace == "" || namespace == split[0] {
@@ -122,7 +122,8 @@ func (dm *DeploymentMap) GetAllDeployments(namespace, function, version string) 
 
 // return a specific deployment by namespace, function name, and version (or alias)
 func (dm *DeploymentMap) FindDeployment(namespace, function, version string, withAliases bool) *Deployment {
-	list, ok := dm.Deployments[namespace + "." + function]
+	key := namespace + "." + function
+	list, ok := dm.deployments[key]
 	if !ok {
 		dm.logger.DebugWith("FindDeployment - array not found", "namespace", namespace, "func", function)
 		return nil
@@ -142,16 +143,27 @@ func (dm *DeploymentMap) FindDeployment(namespace, function, version string, wit
 	return nil
 }
 
-// ?? TODO: broken, unused
+// ?? TODO: unused, need to complete the remove deploy
 func (dm *DeploymentMap) RemoveDeployment(namespace, function, version string) error {
-	list, ok := dm.Deployments[namespace + "." + function]
+	key := namespace + "." + function
+	list, ok := dm.deployments[key]
 	if !ok {
 		return nil
 	}
 
 	for i, dep := range list {
 		if dep.Version == version  {
-			dm.Deployments[namespace + "." + function] = append(list[:i], list[i+1:]...)
+			err := dep.ClearDeployment()
+			if err != nil {
+				dm.logger.ErrorWith("Failed to clear deployment", "deploy", dep.Name, "err", err)
+				return err
+			}
+			newList := append(list[:i], list[i+1:]...)
+			if len(newList) == 0 {
+				delete(dm.deployments, key)
+			} else {
+				dm.deployments[key] = newList
+			}
 			return nil
 		}
 	}

@@ -25,14 +25,18 @@ import (
 	"github.com/nuclio/nuclio-sdk"
 	"github.com/nuclio/nuclio/pkg/zap"
 	"github.com/pkg/errors"
+	"github.com/nuclio/nuclio/pkg/dealer/kubewatch"
+	"k8s.io/client-go/kubernetes"
 )
 
 func run() error {
 	configPath := flag.String("config", "", "Path of configuration file")
-	verbose := flag.Bool("v", false, "Verbose")
+	//verbose    := flag.Bool("v", true, "Verbose")
+	kubeconf   := flag.String("kubeconf", "config", "Path to a kube config. Only required if out-of-cluster.")
+	namespace  := flag.String("n", "", "Namespace")
 	flag.Parse()
 
-	logger, _ := createLogger(*verbose)
+	logger, _ := createLogger(true) //*verbose)
 
 	dealer, err := app.NewJobManager(*configPath, logger)
 	if err != nil {
@@ -44,10 +48,33 @@ func run() error {
 		return err
 	}
 
+	config, err := kubewatch.GetClientConfig(*kubeconf)
+	if err != nil {
+		logger.Warn("Did not find kubernetes config")
+	} else {
+		fmt.Println(config) //TODO:
+		client, err := kubernetes.NewForConfig(config)
+		if err != nil {
+			return err
+		}
+
+		err = kubewatch.NewPodWatcher(client, dealer.Ctx, logger, *namespace)
+		if err != nil {
+			return err
+		}
+
+		err = kubewatch.NewDeployWatcher(client, dealer.Ctx, logger, *namespace)
+		if err != nil {
+			return err
+		}
+
+	}
+
+
 	//Tests(dealer)
 
 	listenPort := 3000
-	portal, err := portal.NewPortal(logger, &dealer.Ctx, listenPort)
+	portal, err := portal.NewPortal(logger, dealer.Ctx, listenPort)
 	if err != nil {
 		return err
 	}

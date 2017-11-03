@@ -28,7 +28,7 @@ import (
 
 func NewProcessEmulator(logger nuclio.Logger, proc *jobs.Process) (ProcessEmulator, error) {
 	newEmulator := ProcessEmulator{logger:logger}
-	newproc, err := jobs.NewProcess(logger, nil, proc)
+	newproc, err := jobs.NewProcess(logger, nil, &jobs.ProcessMessage{BaseProcess: proc.BaseProcess})
 	if err != nil {
 		fmt.Printf("Failed to create process: %s", err)
 		os.Exit(1)

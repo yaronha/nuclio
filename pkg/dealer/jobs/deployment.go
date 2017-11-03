@@ -263,12 +263,13 @@ func (d *Deployment) addTasks2Proc(proc *Process, toAdd, slice int) (int, error)
 
 }
 
-// read/update jobs from deployment TODO: assign expected procs per each , no need for update for now (stash it)
+// read/update jobs from deployment
 func (d *Deployment) updateJobs() error {
 	for _, rjob := range d.JobRequests {
 
 		_, ok := d.jobs[rjob.Name]
 		if !ok {
+			// if this deployment doesnt contain the Job, create and add one
 			newJob := &Job{Name:rjob.Name, Namespace:d.Namespace,
 				Function:d.Function, Version:d.Version,
 				TotalTasks:rjob.TotalTasks, MaxTaskAllocation:rjob.MaxTaskAllocation,
@@ -278,14 +279,12 @@ func (d *Deployment) updateJobs() error {
 				d.dm.logger.ErrorWith("Failed to create a job", "deploy", d.Name, "job", rjob.Name, "err", err)
 			}
 
-			// TODO: change for multi-job per dep & proc
 			d.jobs[rjob.Name] = job
-
-
 		}
 
 	}
 
+	// go over processes in this deployment and give them tasks (note proc list may still be empty at this point)
 	for _, proc := range d.procs {
 		err := d.AllocateTasks(proc)
 		if err != nil {
@@ -297,7 +296,7 @@ func (d *Deployment) updateJobs() error {
 	return nil
 }
 
-// TODO: unused, add job
+// TODO: unused, add job while the deployment is working
 func (d *Deployment) AddJob(job *Job) error {
 
 	//TODO: allocation w rebalance logic
@@ -306,7 +305,7 @@ func (d *Deployment) AddJob(job *Job) error {
 }
 
 
-// TODO: unused, remove job
+// TODO: unused, remove job while the deployment is working
 func (d *Deployment) RemoveJob(job *Job, force bool) error {
 
 	job.Stop(force)
@@ -315,3 +314,8 @@ func (d *Deployment) RemoveJob(job *Job, force bool) error {
 	return nil
 }
 
+// TODO: clear all deployment resources before a delete
+func (d *Deployment) ClearDeployment() error {
+
+	return nil
+}

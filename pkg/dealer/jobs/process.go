@@ -23,7 +23,7 @@ import (
 	"github.com/nuclio/nuclio-sdk"
 	"github.com/nuclio/nuclio/pkg/dealer/client"
 	"net/http"
-	"github.com/yaronha/kubetest/xendor/k8s.io/client-go/pkg/util/json"
+	"encoding/json"
 )
 
 type ProcessState int8
@@ -32,7 +32,8 @@ const (
 	ProcessStateUnknown   ProcessState = 0
 	ProcessStateReady     ProcessState = 1
 	ProcessStateNotReady  ProcessState = 2
-	ProcessStateDelete    ProcessState = 3
+	ProcessStateFailed    ProcessState = 3
+	ProcessStateDelete    ProcessState = 4
 )
 
 type BaseProcess struct {

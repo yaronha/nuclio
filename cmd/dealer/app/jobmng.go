@@ -37,7 +37,7 @@ func NewJobManager(config string, logger nuclio.Logger) (*JobManager, error) {
 	}
 
 	procRespChannel := make(chan *client.Response, 100)
-	newManager.Ctx = jobs.ManagerContext{ ProcRespChannel: procRespChannel,
+	newManager.Ctx = &jobs.ManagerContext{ ProcRespChannel: procRespChannel,
 		Client:newManager.asyncClient, //RequestsChannel:reqChan,
 	}
 
@@ -47,7 +47,7 @@ func NewJobManager(config string, logger nuclio.Logger) (*JobManager, error) {
 
 	reqChan2 := make(chan *jobs.RequestMessage, 100)
 	newManager.Ctx.RequestsChannel = reqChan2
-	newManager.DeployMap, _ = jobs.NewDeploymentMap(logger, &newManager.Ctx)
+	newManager.DeployMap, _ = jobs.NewDeploymentMap(logger, newManager.Ctx)
 
 	newManager.logger = logger
 	return &newManager, nil
@@ -55,7 +55,7 @@ func NewJobManager(config string, logger nuclio.Logger) (*JobManager, error) {
 
 type JobManager struct {
 	logger        nuclio.Logger
-	Ctx           jobs.ManagerContext
+	Ctx           *jobs.ManagerContext
 	RequestsChannel  chan *jobs.RequestMessage
 	verbose       bool
 	Processes     map[string]*jobs.Process
@@ -146,12 +146,16 @@ func (jm *JobManager) Start() error {
 				case jobs.RequestTypeProcUpdateState:
 					proc := req.Object.(*jobs.BaseProcess)
 					err := jm.updateProcessState(proc)
-					req.ReturnChan <- &jobs.RespChanType{
-						Err: err, Object: nil}
+					if req.ReturnChan != nil {
+						req.ReturnChan <- &jobs.RespChanType{
+							Err: err, Object: nil}
+					}
 
 				case jobs.RequestTypeProcDel:
 					err := jm.removeProcess(req.Name, req.Namespace)
-					req.ReturnChan <- &jobs.RespChanType{Err: err}
+					if req.ReturnChan != nil {
+						req.ReturnChan <- &jobs.RespChanType{Err: err}
+					}
 
 				case jobs.RequestTypeProcList:
 					list := []*jobs.ProcessMessage{}
@@ -166,8 +170,10 @@ func (jm *JobManager) Start() error {
 				case jobs.RequestTypeDeployUpdate:
 					dep := req.Object.(*jobs.Deployment)
 					err := jm.DeployMap.UpdateDeployment(dep)
-					req.ReturnChan <- &jobs.RespChanType{
-						Err: err, Object: dep.GetDeploymentState()}
+					if req.ReturnChan != nil {
+						req.ReturnChan <- &jobs.RespChanType{
+							Err: err, Object: dep.GetDeploymentState()}
+					}
 
 				case jobs.RequestTypeDeployList:
 					depList := []*jobs.DeploymentMessage{}
@@ -223,7 +229,7 @@ func (jm *JobManager) addJob(job *jobs.Job) (*jobs.JobMessage, error) {
 		return nil, fmt.Errorf("Deployment %s %s %s not found, cannot add a job", job.Namespace, job.Function, job.Version)
 	}
 
-	newJob, err := jobs.NewJob(&jm.Ctx, job)
+	newJob, err := jobs.NewJob(jm.Ctx, job)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to create a new job")
 	}
@@ -295,7 +301,7 @@ func (jm *JobManager) updateProcess(procMsg *jobs.ProcessMessage) (*jobs.Process
 			return nil, fmt.Errorf("Failed to add process, deployment %s %s %s not found", procMsg.Namespace, procMsg.Function, procMsg.Version)
 		}
 
-		proc, err := jobs.NewProcess(jm.logger, &jm.Ctx, procMsg)
+		proc, err := jobs.NewProcess(jm.logger, jm.Ctx, procMsg)
 		if err != nil {
 			return nil, err
 		}

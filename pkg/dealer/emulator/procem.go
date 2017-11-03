@@ -39,15 +39,20 @@ func main() {
 	function := flag.String("f", "f1", "Function name")
 	version := flag.String("r", "latest", "Function version")
 	alias := flag.String("a", "", "Function alias")
-	url := flag.String("i", "", "Dealer ip:port")
-	port := flag.Int("p",5000,"local port")
+	url := flag.String("u", "", "Dealer ip:port")
+	port := flag.Int("p",8077,"local port")
+	reportedIP := flag.String("i","","reported IP")
 	verbose := flag.Bool("v", false, "Verbose")
 	flag.Parse()
 
-	ip, err := getMyIP()
-	if err != nil {
-		fmt.Printf("Failed to get IP: %s", err)
-		os.Exit(1)
+	ip := *reportedIP
+	if ip == "" {
+		var err error
+		ip, err = getMyIP()
+		if err != nil {
+			fmt.Printf("Failed to get IP: %s", err)
+			os.Exit(1)
+		}
 	}
 
 	logger, _ := createLogger(*verbose)
