@@ -34,15 +34,16 @@ import (
 
 func main() {
 
-	name := flag.String("n", "test", "Process name")
+	host, _ := os.Hostname()
+	name := flag.String("n", host , "Process name")
 	ns := flag.String("s", "default", "Process namespace")
-	function := flag.String("f", "f1", "Function name")
+	function := flag.String("f", os.Getenv("NUCLIO_FUNCTION_NAME"), "Function name")
 	version := flag.String("r", "latest", "Function version")
-	alias := flag.String("a", "", "Function alias")
-	url := flag.String("u", "", "Dealer ip:port")
+	alias := flag.String("a", "latest", "Function alias")
+	url := flag.String("u", os.Getenv("DEALER_URL"), "Dealer ip:port")
 	port := flag.Int("p",8077,"local port")
-	reportedIP := flag.String("i","","reported IP")
-	verbose := flag.Bool("v", false, "Verbose")
+	reportedIP := flag.String("i", os.Getenv("REPORTED_IP"),"reported IP")
+	verbose := flag.Bool("v", true, "Verbose")
 	flag.Parse()
 
 	ip := *reportedIP
@@ -71,8 +72,7 @@ func main() {
 		path := fmt.Sprintf("http://%s/procs", *url)
 		_, err = client.SendRequest("POST", path, headers, body, false)
 		if err != nil {
-			fmt.Printf("Failed to send: %s", err)
-			os.Exit(1)
+			fmt.Printf("Failed to send: %s\n", err)
 		}
 	}
 

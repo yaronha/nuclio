@@ -37,7 +37,7 @@ func (w *Watcher) dispatchChange(message *jobs.RequestMessage) {
 		"function", message.Function,
 		"obj", message.Object)
 
-	//w.managerContext.RequestsChannel <- message
+	w.managerContext.RequestsChannel <- message
 }
 
 
@@ -51,7 +51,7 @@ func NewPodWatcher(client *kubernetes.Clientset, managerContext *jobs.ManagerCon
 	newWatcher.logger.Debug("Watching for POD changes")
 
 	opts := meta_v1.ListOptions{
-		LabelSelector: "serverless=nuclio",
+		LabelSelector: "serverless=test",
 	}
 
 	listWatch := &cache.ListWatch{
@@ -78,6 +78,7 @@ func NewPodWatcher(client *kubernetes.Clientset, managerContext *jobs.ManagerCon
 				proc := getProcStruct(obj.(*v1.Pod))
 				proc.State = jobs.ProcessStateDelete
 				newWatcher.dispatchChange(&jobs.RequestMessage{
+					Name: proc.Name, Namespace: proc.Namespace,
 					Type:jobs.RequestTypeProcDel, Object:proc})
 			},
 			UpdateFunc:func(oldObj, newObj interface{}) {
@@ -148,7 +149,7 @@ func NewDeployWatcher(client *kubernetes.Clientset, managerContext *jobs.Manager
 	newWatcher.logger.Debug("Watching for Deployment changes")
 
 	opts := meta_v1.ListOptions{
-		LabelSelector: "serverless=nuclio",
+		LabelSelector: "serverless=test",
 	}
 
 	listWatch := &cache.ListWatch{
@@ -201,10 +202,17 @@ func getDeployStruct(deploy *v1beta1.Deployment) *jobs.Deployment {
 	funcJson, ok := deploy.Annotations["func_json"]
 	if ok {
 		fn := funcStruct{}
-		json.Unmarshal([]byte(funcJson), &fn)
+		err := json.Unmarshal([]byte(funcJson), &fn)
+		if err == nil {
+			dep.JobRequests = []*jobs.JobReq{}
+			for name, trigger := range fn.Triggers {
+				dep.JobRequests = append(dep.JobRequests, &jobs.JobReq{Name:name, TotalTasks:trigger.Partitions})
+			}
+		}
 		fmt.Println(fn)
 
 	}
+	fmt.Printf("Status %+v\n", deploy.Status)
 	return &dep
 }
 
@@ -213,8 +221,8 @@ type funcStruct struct {
 }
 
 type trigStruct struct {
-	Class       string                     `json:"class"`
-	Kind        string                     `json:"kind"`
-	Attributes  map[string]interface{}     `json:"attributes"`
+	Class       string       `json:"class"`
+	Kind        string       `json:"kind"`
+	Partitions  int          `json:"partitions"`
 }
 

@@ -280,6 +280,7 @@ func (d *Deployment) updateJobs() error {
 			}
 
 			d.jobs[rjob.Name] = job
+			d.dm.logger.DebugWith("Added new job to function","function",d.Name,"job",rjob.Name,"tasks", rjob.TotalTasks)
 		}
 
 	}

@@ -65,6 +65,7 @@ type Process struct {
 type ProcessMessage struct {
 	BaseProcess
 
+	DealerURL     string                 `json:"dealerURL,omitempty"`
 	Tasks         []TaskMessage          `json:"tasks,omitempty"`
 	Jobs          map[string]JobShort    `json:"jobs,omitempty"`
 }

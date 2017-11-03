@@ -27,7 +27,7 @@ import (
 type Context struct {
 	logger     nuclio.Logger
 	httpClient *fasthttp.HostClient
-	url string
+	Url string
 }
 
 func NewContext(parentLogger nuclio.Logger, url string) (*Context, error) {
@@ -36,10 +36,15 @@ func NewContext(parentLogger nuclio.Logger, url string) (*Context, error) {
 		httpClient: &fasthttp.HostClient{
 			Addr: url,
 		},
-		url: url,
+		Url: url,
 	}
 
 	return newClient, nil
+}
+
+func (c *Context) SetUrl(url string) {
+	c.Url = url
+	c.httpClient = &fasthttp.HostClient{Addr: url}
 }
 
 func (c *Context) SendRequest(method string,
