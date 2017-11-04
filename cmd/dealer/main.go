@@ -27,13 +27,15 @@ import (
 	"github.com/pkg/errors"
 	"github.com/nuclio/nuclio/pkg/dealer/kubewatch"
 	"k8s.io/client-go/kubernetes"
+	"time"
 )
 
 func run() error {
 	configPath := flag.String("config", "", "Path of configuration file")
 	//verbose    := flag.Bool("v", true, "Verbose")
-	kubeconf   := flag.String("kubeconf", "config", "Path to a kube config. Only required if out-of-cluster.")
+	kubeconf   := flag.String("k", "config", "Path to a kube config. Only required if out-of-cluster.")
 	namespace  := flag.String("n", "", "Namespace")
+	nopush  := flag.Bool("np", true, "Disable push pudates to process")
 	flag.Parse()
 
 	logger, _ := createLogger(true) //*verbose)
@@ -43,6 +45,7 @@ func run() error {
 		return err
 	}
 
+	dealer.Ctx.DisablePush = *nopush
 	err = dealer.Start()
 	if err != nil {
 		return err
@@ -58,12 +61,14 @@ func run() error {
 			return err
 		}
 
-		err = kubewatch.NewPodWatcher(client, dealer.Ctx, logger, *namespace)
+		err = kubewatch.NewDeployWatcher(client, dealer.Ctx, logger, *namespace)
 		if err != nil {
 			return err
 		}
 
-		err = kubewatch.NewDeployWatcher(client, dealer.Ctx, logger, *namespace)
+		time.Sleep(time.Second)
+
+		err = kubewatch.NewPodWatcher(client, dealer.Ctx, logger, *namespace)
 		if err != nil {
 			return err
 		}

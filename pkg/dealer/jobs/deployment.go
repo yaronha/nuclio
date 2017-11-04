@@ -172,6 +172,9 @@ func (d *Deployment) Rebalance() error {
 		}
 	}
 
+	d.dm.logger.DebugWith("Rebalance","deployment",d.Name, "expProcs", d.ExpectedProc, "procs", len(d.procs),
+		"totTasks", totalTasks, "under", len(tasksUnder), "eq", len(tasksEqual), "plus1", len(tasksPlus1), "over", len(tasksOver))
+
 	// desired state is: N with tasksPerProc+1, newnum-N with tasksPerProc (N=taskReminder)
 	//   and must not go over MaxAllocation per Job
 
@@ -218,6 +221,7 @@ func (d *Deployment) Rebalance() error {
 		//}
 
 		newAlloc := desired - len(p.GetTasks(true))
+		d.dm.logger.DebugWith("Rebalance - add tasks to proc","proc",p.AsString(), "alloc", newAlloc, "missP1", missingPlus1)
 		added, err := d.addTasks2Proc(p, newAlloc, tasksPerProc)
 		if err !=nil {
 			return errors.Wrap(err, "Failed to add tasks")
@@ -228,15 +232,20 @@ func (d *Deployment) Rebalance() error {
 		if usedPlus1 {
 			missingPlus1 -= 1
 		}
+		d.dm.logger.Debug("Rebalance - pre push")
 		_ = p.PushUpdates()
 	}
 
+	d.dm.logger.Debug("Rebalance - finish")
 
 
 	return nil
 }
 
 func (d *Deployment) addTasks2Proc(proc *Process, toAdd, slice int) (int, error) {
+	if toAdd == 0 {
+		return 0, nil
+	}
 	from := make([]int, len(d.jobs))
 	jobIdx := 0
 	added :=0

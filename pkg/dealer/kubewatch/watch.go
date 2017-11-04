@@ -14,7 +14,6 @@ import (
 	"github.com/nuclio/nuclio-sdk"
 	"github.com/nuclio/nuclio/pkg/dealer/jobs"
 	"github.com/yaronha/kubetest/xendor/k8s.io/client-go/pkg/util/json"
-	"fmt"
 )
 
 func GetClientConfig(kubeconfig string) (*rest.Config, error) {
@@ -31,11 +30,13 @@ type Watcher struct {
 }
 
 func (w *Watcher) dispatchChange(message *jobs.RequestMessage) {
+	/*
 	w.logger.DebugWith("Dispatching change",
 		"kind", message.Type,
 		"name", message.Name,
 		"function", message.Function,
 		"obj", message.Object)
+	*/
 
 	w.managerContext.RequestsChannel <- message
 }
@@ -82,10 +83,14 @@ func NewPodWatcher(client *kubernetes.Clientset, managerContext *jobs.ManagerCon
 					Type:jobs.RequestTypeProcDel, Object:proc})
 			},
 			UpdateFunc:func(oldObj, newObj interface{}) {
-				proc := getProcStruct(newObj.(*v1.Pod))
-				proc.State = getPodState(newObj.(*v1.Pod))
-				newWatcher.dispatchChange(&jobs.RequestMessage{
-					Type:jobs.RequestTypeProcUpdateState, Object:proc})
+				oldPod := oldObj.(*v1.Pod)
+				newPod := newObj.(*v1.Pod)
+				if oldPod.ResourceVersion != newPod.ResourceVersion {
+					proc := getProcStruct(newPod)
+					proc.State = getPodState(newPod)
+					newWatcher.dispatchChange(&jobs.RequestMessage{
+						Type:jobs.RequestTypeProcUpdateState, Object:proc})
+				}
 			},
 		},
 	)
@@ -177,9 +182,12 @@ func NewDeployWatcher(client *kubernetes.Clientset, managerContext *jobs.Manager
 					Type:jobs.RequestTypeDeployRemove, Object:dep})
 			},
 			UpdateFunc:func(oldObj, newObj interface{}) {
-				dep := getDeployStruct(newObj.(*v1beta1.Deployment))
-				newWatcher.dispatchChange(&jobs.RequestMessage{
-					Type:jobs.RequestTypeDeployUpdate, Object:dep})
+				oldDep := oldObj.(*v1beta1.Deployment)
+				newDep := newObj.(*v1beta1.Deployment)
+				if oldDep.ObjectMeta.Generation != newDep.ObjectMeta.Generation {
+					newWatcher.dispatchChange(&jobs.RequestMessage{
+						Type:jobs.RequestTypeDeployUpdate, Object: getDeployStruct(newDep)})
+				}
 			},
 		},
 	)
@@ -209,10 +217,10 @@ func getDeployStruct(deploy *v1beta1.Deployment) *jobs.Deployment {
 				dep.JobRequests = append(dep.JobRequests, &jobs.JobReq{Name:name, TotalTasks:trigger.Partitions})
 			}
 		}
-		fmt.Println(fn)
+		//fmt.Println(fn)
 
 	}
-	fmt.Printf("Status %+v\n", deploy.Status)
+	//fmt.Printf("Status %+v\n", deploy.Status)
 	return &dep
 }
 

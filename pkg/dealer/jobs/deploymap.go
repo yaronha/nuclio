@@ -12,7 +12,9 @@ type DeploymentMap struct {
 }
 
 func NewDeploymentMap(logger nuclio.Logger, context *ManagerContext) (*DeploymentMap, error) {
-	newDeploymentMap := DeploymentMap{logger:logger, ctx:context}
+	newDeploymentMap := DeploymentMap{
+		logger: logger.GetChild("DeploymentMap").(nuclio.Logger),
+		ctx: context}
 	newDeploymentMap.deployments = map[string][]*Deployment{}
 	return &newDeploymentMap, nil
 }
@@ -82,6 +84,7 @@ func (dm *DeploymentMap) UpdateDeployment(deployment *Deployment) error {
 					// TODO: change deployment expected (and rebalance)
 
 					dep.ExpectedProc = deployment.ExpectedProc
+					dep.Rebalance()
 
 				}
 			}

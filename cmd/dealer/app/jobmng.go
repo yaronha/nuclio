@@ -23,6 +23,7 @@ import (
 
 	"github.com/nuclio/nuclio/pkg/dealer/client"
 	"github.com/nuclio/nuclio/pkg/dealer/jobs"
+	"time"
 )
 
 func NewJobManager(config string, logger nuclio.Logger) (*JobManager, error) {
@@ -92,7 +93,7 @@ func (jm *JobManager) Start() error {
 				jm.logger.DebugWith("Got proc response", "body", string(resp.Body()))
 
 			case req := <-jm.Ctx.RequestsChannel:
-				jm.logger.DebugWith("Got chan request", "type", req.Type, "name", req.Name, "namespace", req.Namespace)
+				//jm.logger.DebugWith("Got chan request", "type", req.Type, "name", req.Name, "namespace", req.Namespace)
 				switch req.Type {
 				case jobs.RequestTypeJobGet:
 					job, err := jm.getJob(req.Namespace, req.Function, req.Name)
@@ -136,7 +137,11 @@ func (jm *JobManager) Start() error {
 
 				case jobs.RequestTypeProcUpdate:
 					procMsg := req.Object.(*jobs.ProcessMessage)
-					proc, err := jm.updateProcess(procMsg)
+					// if re get a request with unspecified proc state, assume it is ready
+					if procMsg.State == jobs.ProcessStateUnknown {
+						procMsg.State = jobs.ProcessStateReady
+					}
+					proc, err := jm.updateProcess(procMsg, true)
 					req.ReturnChan <- &jobs.RespChanType{
 						Err: err,
 						Object: proc,
@@ -145,10 +150,10 @@ func (jm *JobManager) Start() error {
 				// process POD watch updates to figure out if process is ready
 				case jobs.RequestTypeProcUpdateState:
 					proc := req.Object.(*jobs.BaseProcess)
-					err := jm.updateProcessState(proc)
+					updatedProc, err := jm.updateProcess(&jobs.ProcessMessage{BaseProcess:*proc}, false)
 					if req.ReturnChan != nil {
 						req.ReturnChan <- &jobs.RespChanType{
-							Err: err, Object: nil}
+							Err: err, Object: updatedProc}
 					}
 
 				case jobs.RequestTypeProcDel:
@@ -266,6 +271,7 @@ func (jm *JobManager) removeProcess(name, namespace string) error {
 
 	proc, ok := jm.Processes[key]
 	if !ok {
+		jm.logger.ErrorWith("Process not found in removeProcess", "name", name, "namespace", namespace)
 		return fmt.Errorf("Process %s not found", name)
 	}
 
@@ -278,19 +284,19 @@ func (jm *JobManager) removeProcess(name, namespace string) error {
 	return nil
 }
 
-// TODO: updateProcessState
-func (jm *JobManager) updateProcessState(proc *jobs.BaseProcess) error {
 
-	return nil
-}
-
-
-func (jm *JobManager) updateProcess(procMsg *jobs.ProcessMessage) (*jobs.ProcessMessage, error) {
+func (jm *JobManager) updateProcess(procMsg *jobs.ProcessMessage, checkTasks bool) (*jobs.ProcessMessage, error) {
 
 	key := jobs.ProcessKey(procMsg.Name,procMsg.Namespace)
 	proc, ok := jm.Processes[key]
 
 	if !ok {
+
+		if procMsg.State != jobs.ProcessStateReady {
+			jm.logger.DebugWith("process update, new and state is not ready", "process", procMsg)
+			return procMsg, nil
+		}
+
 		jm.logger.InfoWith("Adding new process", "process", procMsg)
 
 		dep := jm.DeployMap.FindDeployment(procMsg.Namespace, procMsg.Function, procMsg.Version, false)
@@ -301,7 +307,8 @@ func (jm *JobManager) updateProcess(procMsg *jobs.ProcessMessage) (*jobs.Process
 			return nil, fmt.Errorf("Failed to add process, deployment %s %s %s not found", procMsg.Namespace, procMsg.Function, procMsg.Version)
 		}
 
-		proc, err := jobs.NewProcess(jm.logger, jm.Ctx, procMsg)
+		var err error
+		proc, err = jobs.NewProcess(jm.logger, jm.Ctx, procMsg)
 		if err != nil {
 			return nil, err
 		}
@@ -309,8 +316,7 @@ func (jm *JobManager) updateProcess(procMsg *jobs.ProcessMessage) (*jobs.Process
 		jm.Processes[key] = proc
 		dep.AddProcess(proc)
 
-		// TODO: check process state (ready)
-		if dep.ExpectedProc > len(dep.GetProcs()) {
+		if dep.ExpectedProc >= len(dep.GetProcs()) && procMsg.State == jobs.ProcessStateReady {
 			err := dep.AllocateTasks(proc)
 			if err != nil {
 				jm.logger.ErrorWith("Failed to allocate jobtasks to proc", "deploy", dep.Name, "proc", proc.Name, "err", err)
@@ -321,13 +327,17 @@ func (jm *JobManager) updateProcess(procMsg *jobs.ProcessMessage) (*jobs.Process
 
 
 	jm.logger.InfoWith("Update a process", "old", proc, "new", procMsg)
-	err := proc.HandleUpdates(procMsg, true)
-	if err != nil {
-		return nil, err
+	proc.LastUpdate = time.Now()
+	// TODO: handle state transitions
+
+	proc.State = procMsg.State
+	if checkTasks {
+		err := proc.HandleTaskUpdates(procMsg, true)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return proc.GetProcessState(), nil
 }
 
-
-// TODO: update process state (POD updates)

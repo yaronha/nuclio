@@ -36,6 +36,8 @@ const (
 	ProcessStateDelete    ProcessState = 4
 )
 
+const DEFAULT_PORT = 8077
+
 type BaseProcess struct {
 	Name          string                `json:"name"`
 	Namespace     string                `json:"namespace"`
@@ -100,7 +102,7 @@ func NewProcess(logger nuclio.Logger, context *ManagerContext, newProc *ProcessM
 func ProcessKey(name,namespace string) string {return name+"."+namespace}
 
 func (p *Process) AsString() string {
-	return fmt.Sprintf("%s-%s:%s",p.Name,p.State,p.tasks)
+	return fmt.Sprintf("%s-%d:%s",p.Name,p.State,p.tasks)
 }
 
 func (p *Process) GetDeployment() *Deployment {
@@ -191,12 +193,22 @@ func (p *Process) StopNTasks(toDelete int) {
 	}
 }
 
+func (p *Process) getProcessURL() string {
+	port := p.Port
+	if port == 0 {
+		port = DEFAULT_PORT
+	}
+	return fmt.Sprintf("%s:%d", p.IP, port)
+}
+
 // send updates to process
 func (p *Process) PushUpdates() error {
 
 	p.logger.DebugWith("Push updates to processor","processor",p.Name, "state", p.AsString())
-	// if process IP is unknown or unset return without sending
-	if p.IP == "" {
+
+	// if process IP is unknown or unset or push disabled return without sending
+	if p.IP == "" || p.ctx.DisablePush {
+		//p.emulateProcess()
 		return nil
 	}
 
@@ -206,7 +218,7 @@ func (p *Process) PushUpdates() error {
 		return errors.Wrap(err, "Failed to Marshal process for update")
 	}
 
-	host:= fmt.Sprintf("%s:%d", p.IP, p.Port)
+	host:= p.getProcessURL()
 	request := client.ChanRequest{
 		Method: "POST",
 		HostURL: host,
@@ -221,10 +233,9 @@ func (p *Process) PushUpdates() error {
 	return nil
 }
 
-// handle update requests from process or responses following Push Update ops
-func (p *Process) HandleUpdates(msg *ProcessMessage, isRequest bool) error {
+// handle task update requests from process, or responses from process following Push Update ops
+func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest bool) error {
 
-	p.LastUpdate = time.Now()
 	tasksDeleted := false
 	hadTaskError := false
 	jobsToSave := map[string]*Job{}
@@ -300,10 +311,10 @@ func (p *Process) HandleUpdates(msg *ProcessMessage, isRequest bool) error {
 		return fmt.Errorf("Error(s) in task processing, check log")
 	}
 
-	// persist critical changes (completions and checkpoints)
+	// persist critical changes to modified Jobs (had completions or checkpoints)
 	p.ctx.SaveJobs(jobsToSave)
 
-	// if it is a request from the process check if need to allocate tasks (will respond with updated task list)
+	// if it is a request from the process, check if need to allocate tasks (will respond with updated task list)
 	if isRequest && !p.removingTasks {
 		err := p.deployment.AllocateTasks(p)
 		if err !=nil {
@@ -351,9 +362,10 @@ func (p *Process) emulateProcess()  {
 		}
 		tasklist = append(tasklist, taskmsg)
 	}
+	p.logger.DebugWith("emulateProcess", "processor",p.Name, "tasks", tasklist)
 
 	msg := ProcessMessage{}
 	msg.Tasks = tasklist
-	p.HandleUpdates(&msg, true)
+	p.HandleTaskUpdates(&msg, true)
 }
 

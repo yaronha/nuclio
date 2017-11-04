@@ -25,6 +25,7 @@ type ManagerContext struct {
 	OutChannel       chan *client.ChanRequest
 	ProcRespChannel  chan *client.Response
 	Client           *client.AsyncClient
+	DisablePush      bool
 }
 
 func (mc *ManagerContext) SubmitReq(request *RequestMessage) (interface{}, error) {
