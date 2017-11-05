@@ -137,7 +137,7 @@ func (d *Deployment) AllocateTasks(proc *Process) error {
 		newAlloc = totalUnallocated
 	}
 
-	_, err := d.addTasks2Proc(proc, newAlloc, tasksPerProc)
+	_, err := d.addTasks2Proc(proc, newAlloc, totalTasks)
 	if err !=nil {
 		return errors.Wrap(err, "Failed to add tasks")
 	}
@@ -222,7 +222,7 @@ func (d *Deployment) Rebalance() error {
 
 		newAlloc := desired - len(p.GetTasks(true))
 		d.dm.logger.DebugWith("Rebalance - add tasks to proc","proc",p.AsString(), "alloc", newAlloc, "missP1", missingPlus1)
-		added, err := d.addTasks2Proc(p, newAlloc, tasksPerProc)
+		added, err := d.addTasks2Proc(p, newAlloc, totalTasks)
 		if err !=nil {
 			return errors.Wrap(err, "Failed to add tasks")
 		}
@@ -242,34 +242,64 @@ func (d *Deployment) Rebalance() error {
 	return nil
 }
 
-func (d *Deployment) addTasks2Proc(proc *Process, toAdd, slice int) (int, error) {
+
+func (d *Deployment) addTasks2Proc(proc *Process, toAdd, totalTasks int) (int, error) {
 	if toAdd == 0 {
 		return 0, nil
 	}
-	from := make([]int, len(d.jobs))
-	jobIdx := 0
+	type jobRec struct {
+		job *Job
+		from int
+	}
+	jobList := []jobRec{}
 	added :=0
-	// TODO improve distribution algo between jobs
-	loop:
-	for {
-		for _, j := range d.jobs {
-			toAlloc := j.findUnallocTask(1, &from[jobIdx])
-			if len(toAlloc)>0 {
-				proc.AddTasks(toAlloc)
-				added += 1
-				toAdd -= 1
-				if toAdd <= 0 {
-					break loop
-				}
 
+
+	// First pass, give each job more tasks based on its share
+	for _, j := range d.jobs {
+		rec := jobRec{job:j}
+		share := int( float64(toAdd * j.TotalTasks) / float64(totalTasks) + 0.5)
+		toAlloc := j.findUnallocTask(share, &rec.from)
+		toAllocLen := len(toAlloc)
+
+		if toAllocLen > 0 {
+			proc.AddTasks(toAlloc)
+			added += toAllocLen
+			if added >= toAdd {
+				return added, nil
 			}
-			jobIdx += 1
-			if jobIdx == len(d.jobs) {jobIdx=0}
+		}
+
+		// if toAlloc < share it means this job is fully allocated and can be skipped in next round
+		// Prepend, so last job will go first in next allocation round
+		if share == toAllocLen {
+			jobList = append( []jobRec{rec}, jobList...)
 		}
 	}
 
-	return added, nil
+	// 2nd pass, distribute the reminder
+	for {
+		newList := []jobRec{}
+		for _, rec := range jobList {
+			toAlloc := rec.job.findUnallocTask(1, &rec.from)
 
+			if len(toAlloc) > 0 {
+				proc.AddTasks(toAlloc)
+				added += 1
+				if added >= toAdd {
+					return added, nil
+				}
+				newList = append(newList, rec)
+			}
+		}
+		if len(newList) == 0 {
+			return added, nil
+		}
+		jobList = newList
+	}
+
+
+	return added, nil
 }
 
 // read/update jobs from deployment
