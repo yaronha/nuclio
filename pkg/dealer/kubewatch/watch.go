@@ -14,6 +14,7 @@ import (
 	"github.com/nuclio/nuclio-sdk"
 	"github.com/nuclio/nuclio/pkg/dealer/jobs"
 	"github.com/yaronha/kubetest/xendor/k8s.io/client-go/pkg/util/json"
+	"fmt"
 )
 
 func GetClientConfig(kubeconfig string) (*rest.Config, error) {
@@ -90,6 +91,9 @@ func NewPodWatcher(client *kubernetes.Clientset, managerContext *jobs.ManagerCon
 					proc.State = getPodState(newPod)
 					newWatcher.dispatchChange(&jobs.RequestMessage{
 						Type:jobs.RequestTypeProcUpdateState, Object:proc})
+				} else {
+					newWatcher.dispatchChange(&jobs.RequestMessage{
+						Type:jobs.RequestTypeProcHealth, Name:newPod.Name, Namespace: newPod.Namespace})
 				}
 			},
 		},
@@ -212,10 +216,12 @@ func getDeployStruct(deploy *v1beta1.Deployment) *jobs.Deployment {
 		fn := funcStruct{}
 		err := json.Unmarshal([]byte(funcJson), &fn)
 		if err == nil {
-			dep.JobRequests = []*jobs.JobReq{}
+			dep.Triggers = []*jobs.Trigger{}
 			for name, trigger := range fn.Triggers {
-				dep.JobRequests = append(dep.JobRequests, &jobs.JobReq{Name:name, TotalTasks:trigger.Partitions})
+				dep.Triggers = append(dep.Triggers, &jobs.Trigger{Name:name, TotalTasks:trigger.Partitions})
 			}
+		} else {
+			fmt.Println("err",funcJson)
 		}
 		//fmt.Println(fn)
 

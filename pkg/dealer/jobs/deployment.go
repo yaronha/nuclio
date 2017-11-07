@@ -15,7 +15,7 @@ type Deployment struct {
 	Version       string                `json:"version,omitempty"`
 	Alias         string                `json:"alias,omitempty"`
 
-	JobRequests   []*JobReq              `json:"jobRequests,omitempty"`
+	Triggers      []*Trigger            `json:"triggers,omitempty"`
 	ExpectedProc  int                   `json:"expectedProc,omitempty"`
 	procs         map[string]*Process
 	jobs          map[string]*Job
@@ -37,7 +37,7 @@ func (d *DeploymentMessage) Render(w http.ResponseWriter, r *http.Request) error
 }
 
 
-type JobReq struct {
+type Trigger struct {
 	Name               string                `json:"name"`
 	TotalTasks         int                   `json:"totalTasks"`
 	MaxTaskAllocation  int                   `json:"maxTaskAllocation,omitempty"`
@@ -193,12 +193,14 @@ func (d *Deployment) Rebalance() error {
 		} else {
 			p.StopNTasks(len(tasks)-tasksPerProc)
 		}
+		p.removingTasks = true
 		_ = p.PushUpdates()
 	}
 
 	for _, p := range tasksPlus1 {
 		if extraPlus1 > 0 {
 			p.StopNTasks(1)
+			p.removingTasks = true
 			_ = p.PushUpdates()
 			extraPlus1 -= 1
 		} else {
@@ -221,7 +223,7 @@ func (d *Deployment) Rebalance() error {
 		//}
 
 		newAlloc := desired - len(p.GetTasks(true))
-		d.dm.logger.DebugWith("Rebalance - add tasks to proc","proc",p.AsString(), "alloc", newAlloc, "missP1", missingPlus1)
+		d.dm.logger.DebugWith("Rebalance - add tasks to proc","proc",p.AsString(), "alloc", newAlloc, "missP1", missingPlus1, "remove", p.removingTasks)
 		added, err := d.addTasks2Proc(p, newAlloc, totalTasks)
 		if err !=nil {
 			return errors.Wrap(err, "Failed to add tasks")
@@ -232,12 +234,8 @@ func (d *Deployment) Rebalance() error {
 		if usedPlus1 {
 			missingPlus1 -= 1
 		}
-		d.dm.logger.Debug("Rebalance - pre push")
 		_ = p.PushUpdates()
 	}
-
-	d.dm.logger.Debug("Rebalance - finish")
-
 
 	return nil
 }
@@ -254,6 +252,7 @@ func (d *Deployment) addTasks2Proc(proc *Process, toAdd, totalTasks int) (int, e
 	jobList := []jobRec{}
 	added :=0
 
+	// TODO: Handle batch allocations (with MaxAllocation of tasks per process/job)
 
 	// First pass, give each job more tasks based on its share
 	for _, j := range d.jobs {
@@ -304,7 +303,7 @@ func (d *Deployment) addTasks2Proc(proc *Process, toAdd, totalTasks int) (int, e
 
 // read/update jobs from deployment
 func (d *Deployment) updateJobs() error {
-	for _, rjob := range d.JobRequests {
+	for _, rjob := range d.Triggers {
 
 		_, ok := d.jobs[rjob.Name]
 		if !ok {

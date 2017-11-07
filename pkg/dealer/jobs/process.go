@@ -208,7 +208,7 @@ func (p *Process) PushUpdates() error {
 
 	// if process IP is unknown or unset or push disabled return without sending
 	if p.IP == "" || p.ctx.DisablePush {
-		//p.emulateProcess()
+		p.emulateProcess()
 		return nil
 	}
 
@@ -236,8 +236,9 @@ func (p *Process) PushUpdates() error {
 // handle task update requests from process, or responses from process following Push Update ops
 func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest bool) error {
 
-	tasksDeleted := false
-	hadTaskError := false
+	tasksDeleted  := false
+	tasksStopping := false
+	hadTaskError  := false
 	jobsToSave := map[string]*Job{}
 
 	// Update state of currently allocated tasks
@@ -282,6 +283,9 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest bool) error {
 			p.RemoveTask(msgTask.Job, taskID)
 			task.SetProcess(nil)
 			tasksDeleted = true
+		case TaskStateStopping:
+			// Tasks are still in Stopping state, so we keep the process in removingTasks state
+			tasksStopping = true
 		case TaskStateCompleted:
 			if task.State != TaskStateCompleted {
 				// if this is the first time we get completion we add the task to completed and save list
@@ -324,8 +328,10 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest bool) error {
 	}
 
 	// if some tasks deleted (returned to pool) rebalance
-	if tasksDeleted {
+	if tasksDeleted && ! tasksStopping {
+		p.removingTasks = true
 		p.deployment.Rebalance()    //TODO: verify no circular dep
+		p.removingTasks = false
 	}
 
 	return nil
@@ -364,8 +370,14 @@ func (p *Process) emulateProcess()  {
 	}
 	p.logger.DebugWith("emulateProcess", "processor",p.Name, "tasks", tasklist)
 
-	msg := ProcessMessage{}
+	msg := ProcessMessage{BaseProcess: p.BaseProcess}
 	msg.Tasks = tasklist
-	p.HandleTaskUpdates(&msg, true)
+
+	go func() {
+		time.Sleep(time.Second)
+		p.ctx.SubmitReq(&RequestMessage{
+			Object: &msg, Type:RequestTypeProcUpdate})
+	}()
+
 }
 

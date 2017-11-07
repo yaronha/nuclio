@@ -156,6 +156,12 @@ func (jm *JobManager) Start() error {
 							Err: err, Object: updatedProc}
 					}
 
+				case jobs.RequestTypeProcHealth:
+					err := jm.processHealth(req.Name, req.Namespace)
+					if req.ReturnChan != nil {
+						req.ReturnChan <- &jobs.RespChanType{Err: err}
+					}
+
 				case jobs.RequestTypeProcDel:
 					err := jm.removeProcess(req.Name, req.Namespace)
 					if req.ReturnChan != nil {
@@ -266,7 +272,7 @@ func (jm *JobManager) updateJob(oldJob, newjob *jobs.JobMessage) error {
 
 func (jm *JobManager) removeProcess(name, namespace string) error {
 
-	jm.logger.InfoWith("Removing a process", "name", name, "namespace", namespace)
+	jm.logger.DebugWith("Removing a process", "name", name, "namespace", namespace)
 	key := jobs.ProcessKey(name,namespace)
 
 	proc, ok := jm.Processes[key]
@@ -281,6 +287,20 @@ func (jm *JobManager) removeProcess(name, namespace string) error {
 		return err
 	}
 	delete(jm.Processes, key)
+	return nil
+}
+
+func (jm *JobManager) processHealth(name, namespace string) error {
+
+	jm.logger.DebugWith("Got heart beat form process", "name", name, "namespace", namespace)
+	key := jobs.ProcessKey(name,namespace)
+	proc, ok := jm.Processes[key]
+	if !ok {
+		jm.logger.ErrorWith("Process not found in processHealth", "name", name, "namespace", namespace)
+		return fmt.Errorf("Process %s not found", name)
+	}
+
+	proc.LastEvent = time.Now()
 	return nil
 }
 

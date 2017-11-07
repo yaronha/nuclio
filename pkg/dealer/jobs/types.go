@@ -61,6 +61,7 @@ const (
 	RequestTypeProcList
 	RequestTypeProcUpdateState
 	RequestTypeProcUpdate
+	RequestTypeProcHealth
 
 	RequestTypeDeployUpdate
 	RequestTypeDeployRemove
