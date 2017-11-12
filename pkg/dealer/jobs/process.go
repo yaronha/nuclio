@@ -17,65 +17,71 @@ limitations under the License.
 package jobs
 
 import (
-	"time"
+	"encoding/json"
 	"fmt"
-	"github.com/pkg/errors"
 	"github.com/nuclio/nuclio-sdk"
 	"github.com/nuclio/nuclio/pkg/dealer/client"
+	"github.com/pkg/errors"
 	"net/http"
-	"encoding/json"
+	"time"
 )
 
 type ProcessState int8
 
 const (
-	ProcessStateUnknown   ProcessState = 0
-	ProcessStateReady     ProcessState = 1
-	ProcessStateNotReady  ProcessState = 2
-	ProcessStateFailed    ProcessState = 3
-	ProcessStateDelete    ProcessState = 4
+	ProcessStateUnknown  ProcessState = 0
+	ProcessStateReady    ProcessState = 1
+	ProcessStateNotReady ProcessState = 2
+	ProcessStateFailed   ProcessState = 3
+	ProcessStateDelete   ProcessState = 4
 )
 
 const DEFAULT_PORT = 8077
 
 type BaseProcess struct {
-	Name          string                `json:"name"`
-	Namespace     string                `json:"namespace"`
-	Function      string                `json:"function"`
-	Version       string                `json:"version,omitempty"`
-	Alias         string                `json:"alias,omitempty"`
-	IP            string                `json:"ip"`
-	Port          int                   `json:"port"`
-	State         ProcessState          `json:"state"`
-	LastEvent     time.Time             `json:"lastEvent,omitempty"`
-	TotalEvents   int                   `json:"totalEvents,omitempty"`
+	Name        string       `json:"name"`
+	Namespace   string       `json:"namespace"`
+	Function    string       `json:"function"`
+	Version     string       `json:"version,omitempty"`
+	Alias       string       `json:"alias,omitempty"`
+	IP          string       `json:"ip"`
+	Port        int          `json:"port"`
+	State       ProcessState `json:"state"`
+	LastEvent   time.Time    `json:"lastEvent,omitempty"`
+	TotalEvents int          `json:"totalEvents,omitempty"`
 }
 
 type Process struct {
 	BaseProcess
-	deployment    *Deployment
-	LastUpdate    time.Time             `json:"lastUpdate,omitempty"`
+	deployment *Deployment
+	LastUpdate time.Time `json:"lastUpdate,omitempty"`
 
 	//BaseProcess
 	logger        nuclio.Logger
 	ctx           *ManagerContext
 	removingTasks bool
 	tasks         []*Task
+	jobs          map[string]procJob
 }
 
 // Process request and response for the REST API
 type ProcessMessage struct {
 	BaseProcess
 
-	DealerURL     string                 `json:"dealerURL,omitempty"`
-	Tasks         []TaskMessage          `json:"tasks,omitempty"`
-	Jobs          map[string]JobShort    `json:"jobs,omitempty"`
+	DealerURL string              `json:"dealerURL,omitempty"`
+	Tasks     []TaskMessage       `json:"tasks,omitempty"`
+	Jobs      map[string]JobShort `json:"jobs,omitempty"`
 }
 
 // TODO: should be aligned with Event definition struct
 type JobShort struct {
-	TotalTasks    int                   `json:"totalTasks"`
-	Metadata      interface{}           `json:"metadata,omitempty"`
+	TotalTasks int         `json:"totalTasks"`
+	Metadata   interface{} `json:"metadata,omitempty"`
+}
+
+type procJob struct {
+	job   *Job
+	tasks []*Task
 }
 
 func (p *ProcessMessage) Bind(r *http.Request) error {
@@ -85,8 +91,6 @@ func (p *ProcessMessage) Bind(r *http.Request) error {
 func (p *ProcessMessage) Render(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
-
-
 
 func NewProcess(logger nuclio.Logger, context *ManagerContext, newProc *ProcessMessage) (*Process, error) {
 	proc := &Process{BaseProcess: newProc.BaseProcess}
@@ -99,10 +103,10 @@ func NewProcess(logger nuclio.Logger, context *ManagerContext, newProc *ProcessM
 	return proc, nil
 }
 
-func ProcessKey(name,namespace string) string {return name+"."+namespace}
+func ProcessKey(name, namespace string) string { return name + "." + namespace }
 
 func (p *Process) AsString() string {
-	return fmt.Sprintf("%s-%d:%s",p.Name,p.State,p.tasks)
+	return fmt.Sprintf("%s-%d:%s", p.Name, p.State, p.tasks)
 }
 
 func (p *Process) GetDeployment() *Deployment {
@@ -187,7 +191,7 @@ func (p *Process) StopNTasks(toDelete int) {
 
 	for i, task := range p.tasks {
 		task.State = TaskStateStopping
-		if i == toDelete - 1 {
+		if i == toDelete-1 {
 			break
 		}
 	}
@@ -204,7 +208,7 @@ func (p *Process) getProcessURL() string {
 // send updates to process
 func (p *Process) PushUpdates() error {
 
-	p.logger.DebugWith("Push updates to processor","processor",p.Name, "state", p.AsString())
+	p.logger.DebugWith("Push updates to processor", "processor", p.Name, "state", p.AsString())
 
 	// if process IP is unknown or unset or push disabled return without sending
 	if p.IP == "" || p.ctx.DisablePush {
@@ -214,17 +218,17 @@ func (p *Process) PushUpdates() error {
 
 	message := p.GetProcessState()
 	body, err := json.Marshal(message)
-	if err !=nil {
+	if err != nil {
 		return errors.Wrap(err, "Failed to Marshal process for update")
 	}
 
-	host:= p.getProcessURL()
+	host := p.getProcessURL()
 	request := client.ChanRequest{
-		Method: "POST",
-		HostURL: host,
-		Url: fmt.Sprintf("http://%s/triggers", host), //TODO: have proper URL
-		Body: body,
-		NeedResp: false,
+		Method:     "POST",
+		HostURL:    host,
+		Url:        fmt.Sprintf("http://%s/triggers", host), //TODO: have proper URL
+		Body:       body,
+		NeedResp:   false,
 		ReturnChan: p.ctx.ProcRespChannel,
 	}
 
@@ -236,9 +240,9 @@ func (p *Process) PushUpdates() error {
 // handle task update requests from process, or responses from process following Push Update ops
 func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest bool) error {
 
-	tasksDeleted  := false
+	tasksDeleted := false
 	tasksStopping := false
-	hadTaskError  := false
+	hadTaskError := false
 	jobsToSave := map[string]*Job{}
 
 	// Update state of currently allocated tasks
@@ -246,12 +250,12 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest bool) error {
 		taskID := msgTask.Id
 		job, ok := p.deployment.jobs[msgTask.Job]
 		if !ok {
-			p.logger.ErrorWith("Task job (name) not found under deployment","processor",p.Name, "task", taskID, "job", msgTask.Job)
+			p.logger.ErrorWith("Task job (name) not found under deployment", "processor", p.Name, "task", taskID, "job", msgTask.Job)
 			hadTaskError = true
 			continue
 		}
 		if taskID >= job.TotalTasks {
-			p.logger.ErrorWith("Illegal TaskID, greater than total tasks #","processor",p.Name, "task", taskID, "job", msgTask.Job)
+			p.logger.ErrorWith("Illegal TaskID, greater than total tasks #", "processor", p.Name, "task", taskID, "job", msgTask.Job)
 			hadTaskError = true
 			continue
 		}
@@ -262,14 +266,14 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest bool) error {
 
 		// verify the reporting process is the true owner of that task, we may have already re-alocated it
 		if task.process != nil && task.process.Name != p.Name {
-			p.logger.ErrorWith("Task process is null or mapped to a different process","processor",p.Name, "task", taskID, "job", msgTask.Job)
+			p.logger.ErrorWith("Task process is null or mapped to a different process", "processor", p.Name, "task", taskID, "job", msgTask.Job)
 			hadTaskError = true
 			continue
 		}
 
 		// Do we need to persist job metadata ?
 		if task.CheckPoint != nil && !job.NeedToSave() {
-				jobsToSave[job.Name] = job
+			jobsToSave[job.Name] = job
 		}
 
 		task.LastUpdate = time.Now()
@@ -303,13 +307,12 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest bool) error {
 				task.State = msgTask.State
 			}
 		default:
-			p.logger.ErrorWith("illegal returned state in task ID","processor",p.Name, "task", taskID, "job", msgTask.Job, "state", msgTask.State)
+			p.logger.ErrorWith("illegal returned state in task ID", "processor", p.Name, "task", taskID, "job", msgTask.Job, "state", msgTask.State)
 			hadTaskError = true
 			continue
 		}
 
 	}
-
 
 	if hadTaskError {
 		return fmt.Errorf("Error(s) in task processing, check log")
@@ -321,16 +324,16 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest bool) error {
 	// if it is a request from the process, check if need to allocate tasks (will respond with updated task list)
 	if isRequest && !p.removingTasks {
 		err := p.deployment.AllocateTasks(p)
-		if err !=nil {
-			p.logger.ErrorWith("Failed to allocate tasks", "processor",p.Name)
+		if err != nil {
+			p.logger.ErrorWith("Failed to allocate tasks", "processor", p.Name)
 			return errors.Wrap(err, "Failed to allocate tasks")
 		}
 	}
 
 	// if some tasks deleted (returned to pool) rebalance
-	if tasksDeleted && ! tasksStopping {
+	if tasksDeleted && !tasksStopping {
 		p.removingTasks = true
-		p.deployment.Rebalance()    //TODO: verify no circular dep
+		p.deployment.Rebalance() //TODO: verify no circular dep
 		p.removingTasks = false
 	}
 
@@ -339,27 +342,26 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest bool) error {
 }
 
 // return an enriched process struct for API
-func (p *Process) GetProcessState() *ProcessMessage  {
+func (p *Process) GetProcessState() *ProcessMessage {
 	msg := ProcessMessage{BaseProcess: p.BaseProcess}
 	msg.Tasks = []TaskMessage{}
 	msg.Jobs = map[string]JobShort{}
 
 	for _, task := range p.tasks {
-		msg.Tasks = append(msg.Tasks, TaskMessage{BaseTask:task.BaseTask, Job:task.job.Name})
+		msg.Tasks = append(msg.Tasks, TaskMessage{BaseTask: task.BaseTask, Job: task.job.Name})
 		if _, ok := msg.Jobs[task.job.Name]; !ok {
-			msg.Jobs[task.job.Name] = JobShort{TotalTasks:task.job.TotalTasks, Metadata:task.job.Metadata}
+			msg.Jobs[task.job.Name] = JobShort{TotalTasks: task.job.TotalTasks, Metadata: task.job.Metadata}
 		}
 	}
 
 	return &msg
 }
 
-
 // emulate a process locally, unused, may be broken
-func (p *Process) emulateProcess()  {
+func (p *Process) emulateProcess() {
 	tasklist := []TaskMessage{}
 	for _, task := range p.tasks {
-		taskmsg := TaskMessage{BaseTask:task.BaseTask, Job:task.job.Name}
+		taskmsg := TaskMessage{BaseTask: task.BaseTask, Job: task.job.Name}
 		switch task.State {
 		case TaskStateStopping:
 			taskmsg.State = TaskStateDeleted
@@ -368,7 +370,7 @@ func (p *Process) emulateProcess()  {
 		}
 		tasklist = append(tasklist, taskmsg)
 	}
-	p.logger.DebugWith("emulateProcess", "processor",p.Name, "tasks", tasklist)
+	p.logger.DebugWith("emulateProcess", "processor", p.Name, "tasks", tasklist)
 
 	msg := ProcessMessage{BaseProcess: p.BaseProcess}
 	msg.Tasks = tasklist
@@ -376,8 +378,7 @@ func (p *Process) emulateProcess()  {
 	go func() {
 		time.Sleep(time.Second)
 		p.ctx.SubmitReq(&RequestMessage{
-			Object: &msg, Type:RequestTypeProcUpdate})
+			Object: &msg, Type: RequestTypeProcUpdate})
 	}()
 
 }
-

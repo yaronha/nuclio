@@ -17,30 +17,27 @@ limitations under the License.
 package portal
 
 import (
-	"net/http"
-	"github.com/go-chi/chi"
 	"fmt"
+	"github.com/go-chi/chi"
+	"github.com/go-chi/render"
 	"github.com/nuclio/nuclio-sdk"
 	"github.com/nuclio/nuclio/pkg/dealer/jobs"
-	"github.com/go-chi/render"
+	"net/http"
 )
 
 func NewPortal(logger nuclio.Logger, managerCtx *jobs.ManagerContext, port int) (DealerPortal, error) {
 	newPortal := DealerPortal{
-		managerContext:managerCtx ,
-		port:port,
-		logger: logger.GetChild("portal").(nuclio.Logger)}
+		managerContext: managerCtx,
+		port:           port,
+		logger:         logger.GetChild("portal").(nuclio.Logger)}
 	return newPortal, nil
 }
 
-
 type DealerPortal struct {
 	managerContext *jobs.ManagerContext
-	logger     nuclio.Logger
-	port       int
-
+	logger         nuclio.Logger
+	port           int
 }
-
 
 func (d *DealerPortal) Start() error {
 
@@ -51,7 +48,6 @@ func (d *DealerPortal) Start() error {
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("welcome"))
 	})
-
 
 	r.Route("/jobs", func(r chi.Router) {
 		r.Get("/", jobsPortal.listJobs)
@@ -92,6 +88,7 @@ func (d *DealerPortal) Start() error {
 	r.Route("/deploy", func(r chi.Router) {
 		r.Post("/", d.updateDeployment)
 		r.Get("/", d.listDeployments)
+		r.Delete("/", d.removeDeployment)
 
 		r.Route("/{namespace}", func(r chi.Router) {
 			r.Get("/", d.listDeployments)
@@ -107,7 +104,6 @@ func (d *DealerPortal) Start() error {
 	return http.ListenAndServe(fmt.Sprintf(":%d", d.port), r)
 }
 
-
 func (d *DealerPortal) updateDeployment(w http.ResponseWriter, r *http.Request) {
 	data := &DeployRequest{}
 	if err := render.Bind(r, data); err != nil {
@@ -116,7 +112,7 @@ func (d *DealerPortal) updateDeployment(w http.ResponseWriter, r *http.Request) 
 	}
 
 	dep, err := d.managerContext.SubmitReq(&jobs.RequestMessage{
-		Object:data.Deployment, Type:jobs.RequestTypeDeployUpdate})
+		Object: data.Deployment, Type: jobs.RequestTypeDeployUpdate})
 
 	if err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
@@ -129,13 +125,31 @@ func (d *DealerPortal) updateDeployment(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+func (d *DealerPortal) removeDeployment(w http.ResponseWriter, r *http.Request) {
+	data := &DeployRequest{}
+	if err := render.Bind(r, data); err != nil {
+		render.Render(w, r, ErrInvalidRequest(err))
+		return
+	}
+
+	_, err := d.managerContext.SubmitReq(&jobs.RequestMessage{
+		Object: data.Deployment, Type: jobs.RequestTypeDeployRemove})
+
+	if err != nil {
+		render.Render(w, r, ErrInvalidRequest(err))
+		return
+	}
+
+	w.Write([]byte(fmt.Sprintf("Deleted deployment: %s", data.Deployment.Name)))
+}
+
 func (jp *DealerPortal) listDeployments(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 	function := chi.URLParam(r, "function")
 	list := []render.Renderer{}
 
 	depList, err := jp.managerContext.SubmitReq(&jobs.RequestMessage{
-		Namespace:namespace, Function: function, Type:jobs.RequestTypeDeployList})
+		Namespace: namespace, Function: function, Type: jobs.RequestTypeDeployList})
 
 	if err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
@@ -146,13 +160,11 @@ func (jp *DealerPortal) listDeployments(w http.ResponseWriter, r *http.Request) 
 		list = append(list, dep)
 	}
 
-	if err := render.RenderList(w, r, list ); err != nil {
+	if err := render.RenderList(w, r, list); err != nil {
 		render.Render(w, r, ErrRender(err))
 		return
 	}
 }
-
-
 
 type DeployRequest struct {
 	*jobs.Deployment
@@ -165,4 +177,3 @@ func (d *DeployRequest) Bind(r *http.Request) error {
 func (d *DeployRequest) Render(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
-

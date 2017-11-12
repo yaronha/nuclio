@@ -6,15 +6,15 @@ import (
 )
 
 type DeploymentMap struct {
-	deployments   map[string][]*Deployment
-	logger        nuclio.Logger
-	ctx           *ManagerContext
+	deployments map[string][]*Deployment
+	logger      nuclio.Logger
+	ctx         *ManagerContext
 }
 
 func NewDeploymentMap(logger nuclio.Logger, context *ManagerContext) (*DeploymentMap, error) {
 	newDeploymentMap := DeploymentMap{
 		logger: logger.GetChild("DeploymentMap").(nuclio.Logger),
-		ctx: context}
+		ctx:    context}
 	newDeploymentMap.deployments = map[string][]*Deployment{}
 	return &newDeploymentMap, nil
 }
@@ -22,10 +22,9 @@ func NewDeploymentMap(logger nuclio.Logger, context *ManagerContext) (*Deploymen
 func (dm *DeploymentMap) NewDeployment(newDeployment *Deployment) *Deployment {
 	newDeployment.dm = dm
 	newDeployment.procs = map[string]*Process{}
-	newDeployment.jobs  = map[string]*Job{}
+	newDeployment.jobs = map[string]*Job{}
 	return newDeployment
 }
-
 
 func (dm *DeploymentMap) UpdateDeployment(deployment *Deployment) error {
 
@@ -104,7 +103,6 @@ func (dm *DeploymentMap) UpdateDeployment(deployment *Deployment) error {
 	return nil
 }
 
-
 // return a filtered list of deployments (for portal)
 func (dm *DeploymentMap) GetAllDeployments(namespace, function, version string) []*Deployment {
 	list := []*Deployment{}
@@ -146,7 +144,7 @@ func (dm *DeploymentMap) FindDeployment(namespace, function, version string, wit
 	return nil
 }
 
-// ?? TODO: unused, need to complete the remove deploy
+//  TODO: need to complete the remove deploy
 func (dm *DeploymentMap) RemoveDeployment(namespace, function, version string) error {
 	key := namespace + "." + function
 	list, ok := dm.deployments[key]
@@ -155,7 +153,7 @@ func (dm *DeploymentMap) RemoveDeployment(namespace, function, version string) e
 	}
 
 	for i, dep := range list {
-		if dep.Version == version  {
+		if dep.Version == version {
 			err := dep.ClearDeployment()
 			if err != nil {
 				dm.logger.ErrorWith("Failed to clear deployment", "deploy", dep.Name, "err", err)
@@ -173,6 +171,3 @@ func (dm *DeploymentMap) RemoveDeployment(namespace, function, version string) e
 
 	return nil
 }
-
-
-

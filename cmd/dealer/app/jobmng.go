@@ -29,7 +29,7 @@ import (
 func NewJobManager(config string, logger nuclio.Logger) (*JobManager, error) {
 	newManager := JobManager{}
 	newManager.Processes = make(map[string]*jobs.Process)
-	newManager.verbose = true   // TODO: from config
+	newManager.verbose = true // TODO: from config
 
 	var err error
 	newManager.asyncClient, err = client.NewAsyncClient(logger)
@@ -38,8 +38,8 @@ func NewJobManager(config string, logger nuclio.Logger) (*JobManager, error) {
 	}
 
 	procRespChannel := make(chan *client.Response, 100)
-	newManager.Ctx = &jobs.ManagerContext{ ProcRespChannel: procRespChannel,
-		Client:newManager.asyncClient, //RequestsChannel:reqChan,
+	newManager.Ctx = &jobs.ManagerContext{ProcRespChannel: procRespChannel,
+		Client: newManager.asyncClient, //RequestsChannel:reqChan,
 	}
 
 	// TODO: fixme
@@ -55,21 +55,20 @@ func NewJobManager(config string, logger nuclio.Logger) (*JobManager, error) {
 }
 
 type JobManager struct {
-	logger        nuclio.Logger
-	Ctx           *jobs.ManagerContext
-	RequestsChannel  chan *jobs.RequestMessage
-	verbose       bool
-	Processes     map[string]*jobs.Process
-	DeployMap     *jobs.DeploymentMap
-	asyncClient   *client.AsyncClient
-
+	logger          nuclio.Logger
+	Ctx             *jobs.ManagerContext
+	RequestsChannel chan *jobs.RequestMessage
+	verbose         bool
+	Processes       map[string]*jobs.Process
+	DeployMap       *jobs.DeploymentMap
+	asyncClient     *client.AsyncClient
 }
 
 func (jm *JobManager) SubmitReq(request *jobs.RequestMessage) (interface{}, error) {
 	respChan := make(chan *jobs.RespChanType)
 	request.ReturnChan = respChan
 	jm.Ctx.RequestsChannel <- request
-	resp := <- respChan
+	resp := <-respChan
 	return resp.Object, resp.Err
 	return nil, nil
 }
@@ -88,8 +87,10 @@ func (jm *JobManager) Start() error {
 		for {
 			select {
 			case resp, ok := <-jm.Ctx.ProcRespChannel:
-			// TODO: process responses
-				if !ok { break }
+				// TODO: process responses
+				if !ok {
+					break
+				}
 				jm.logger.DebugWith("Got proc response", "body", string(resp.Body()))
 
 			case req := <-jm.Ctx.RequestsChannel:
@@ -109,25 +110,24 @@ func (jm *JobManager) Start() error {
 					req.ReturnChan <- &jobs.RespChanType{Err: err}
 
 				case jobs.RequestTypeJobList:
-					list := jm.listJobs(req.Namespace,req.Function, "")
+					list := jm.listJobs(req.Namespace, req.Function, "")
 					req.ReturnChan <- &jobs.RespChanType{Err: nil, Object: list}
 
 				case jobs.RequestTypeJobUpdate:
 					// TODO: consider what need to allow in update
 					job, err := jm.getJob(req.Namespace, req.Function, req.Name)
 					if err != nil {
-						req.ReturnChan <- &jobs.RespChanType{ Err: err, Object: job}
+						req.ReturnChan <- &jobs.RespChanType{Err: err, Object: job}
 					} else {
 						err := jm.updateJob(job, req.Object.(*jobs.JobMessage))
 						req.ReturnChan <- &jobs.RespChanType{Err: err, Object: job}
 					}
 
-
 				case jobs.RequestTypeProcGet:
-					proc, ok := jm.Processes[jobs.ProcessKey(req.Name,req.Namespace)]
+					proc, ok := jm.Processes[jobs.ProcessKey(req.Name, req.Namespace)]
 					if !ok {
 						req.ReturnChan <- &jobs.RespChanType{
-							Err: fmt.Errorf("Process %s not found", req.Name),
+							Err:    fmt.Errorf("Process %s not found", req.Name),
 							Object: proc,
 						}
 					} else {
@@ -143,14 +143,14 @@ func (jm *JobManager) Start() error {
 					}
 					proc, err := jm.updateProcess(procMsg, true)
 					req.ReturnChan <- &jobs.RespChanType{
-						Err: err,
+						Err:    err,
 						Object: proc,
 					}
 
 				// process POD watch updates to figure out if process is ready
 				case jobs.RequestTypeProcUpdateState:
 					proc := req.Object.(*jobs.BaseProcess)
-					updatedProc, err := jm.updateProcess(&jobs.ProcessMessage{BaseProcess:*proc}, false)
+					updatedProc, err := jm.updateProcess(&jobs.ProcessMessage{BaseProcess: *proc}, false)
 					if req.ReturnChan != nil {
 						req.ReturnChan <- &jobs.RespChanType{
 							Err: err, Object: updatedProc}
@@ -177,7 +177,6 @@ func (jm *JobManager) Start() error {
 					}
 					req.ReturnChan <- &jobs.RespChanType{Err: nil, Object: list}
 
-
 				case jobs.RequestTypeDeployUpdate:
 					dep := req.Object.(*jobs.Deployment)
 					err := jm.DeployMap.UpdateDeployment(dep)
@@ -196,6 +195,13 @@ func (jm *JobManager) Start() error {
 					req.ReturnChan <- &jobs.RespChanType{
 						Err: nil, Object: depList}
 
+				case jobs.RequestTypeDeployRemove:
+					dep := req.Object.(*jobs.Deployment)
+					err := jm.DeployMap.RemoveDeployment(dep.Namespace, dep.Function, dep.Version)
+					if req.ReturnChan != nil {
+						req.ReturnChan <- &jobs.RespChanType{Err: err}
+					}
+
 				}
 			}
 		}
@@ -203,7 +209,6 @@ func (jm *JobManager) Start() error {
 
 	return nil
 }
-
 
 func (jm *JobManager) getJob(namespace, function, name string) (*jobs.JobMessage, error) {
 	list := jm.listJobs(namespace, function, "")
@@ -269,11 +274,10 @@ func (jm *JobManager) updateJob(oldJob, newjob *jobs.JobMessage) error {
 	return nil
 }
 
-
 func (jm *JobManager) removeProcess(name, namespace string) error {
 
 	jm.logger.DebugWith("Removing a process", "name", name, "namespace", namespace)
-	key := jobs.ProcessKey(name,namespace)
+	key := jobs.ProcessKey(name, namespace)
 
 	proc, ok := jm.Processes[key]
 	if !ok {
@@ -293,7 +297,7 @@ func (jm *JobManager) removeProcess(name, namespace string) error {
 func (jm *JobManager) processHealth(name, namespace string) error {
 
 	jm.logger.DebugWith("Got heart beat form process", "name", name, "namespace", namespace)
-	key := jobs.ProcessKey(name,namespace)
+	key := jobs.ProcessKey(name, namespace)
 	proc, ok := jm.Processes[key]
 	if !ok {
 		jm.logger.ErrorWith("Process not found in processHealth", "name", name, "namespace", namespace)
@@ -304,10 +308,9 @@ func (jm *JobManager) processHealth(name, namespace string) error {
 	return nil
 }
 
-
 func (jm *JobManager) updateProcess(procMsg *jobs.ProcessMessage, checkTasks bool) (*jobs.ProcessMessage, error) {
 
-	key := jobs.ProcessKey(procMsg.Name,procMsg.Namespace)
+	key := jobs.ProcessKey(procMsg.Name, procMsg.Namespace)
 	proc, ok := jm.Processes[key]
 
 	if !ok {
@@ -345,7 +348,6 @@ func (jm *JobManager) updateProcess(procMsg *jobs.ProcessMessage, checkTasks boo
 		}
 	}
 
-
 	jm.logger.InfoWith("Update a process", "old", proc, "new", procMsg)
 	proc.LastUpdate = time.Now()
 	// TODO: handle state transitions
@@ -360,4 +362,3 @@ func (jm *JobManager) updateProcess(procMsg *jobs.ProcessMessage, checkTasks boo
 
 	return proc.GetProcessState(), nil
 }
-
