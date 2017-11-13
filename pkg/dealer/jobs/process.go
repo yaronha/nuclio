@@ -60,23 +60,24 @@ type Process struct {
 	logger        nuclio.Logger
 	ctx           *ManagerContext
 	removingTasks bool
-	tasks         []*Task
-	jobs          map[string]procJob
+	//tasks         []*Task
+	jobs map[string]*procJob
 }
 
 // Process request and response for the REST API
 type ProcessMessage struct {
 	BaseProcess
 
-	DealerURL string              `json:"dealerURL,omitempty"`
-	Tasks     []TaskMessage       `json:"tasks,omitempty"`
-	Jobs      map[string]JobShort `json:"jobs,omitempty"`
+	DealerURL string `json:"dealerURL,omitempty"`
+	//Tasks     []TaskMessage       `json:"tasks,omitempty"`
+	Jobs map[string]JobShort `json:"jobs,omitempty"`
 }
 
 // TODO: should be aligned with Event definition struct
 type JobShort struct {
-	TotalTasks int         `json:"totalTasks"`
-	Metadata   interface{} `json:"metadata,omitempty"`
+	TotalTasks int           `json:"totalTasks"`
+	Tasks      []TaskMessage `json:"tasks,omitempty"`
+	Metadata   interface{}   `   json:"metadata,omitempty"`
 }
 
 type procJob struct {
@@ -100,13 +101,15 @@ func NewProcess(logger nuclio.Logger, context *ManagerContext, newProc *ProcessM
 	proc.LastUpdate = time.Now()
 	proc.ctx = context
 	proc.logger = logger
+	proc.jobs = map[string]*procJob{}
 	return proc, nil
 }
 
 func ProcessKey(name, namespace string) string { return name + "." + namespace }
 
 func (p *Process) AsString() string {
-	return fmt.Sprintf("%s-%d:%s", p.Name, p.State, p.tasks)
+	// TODO: add jobs/tasks
+	return fmt.Sprintf("%s-%d", p.Name, p.State)
 }
 
 func (p *Process) GetDeployment() *Deployment {
@@ -116,10 +119,12 @@ func (p *Process) GetDeployment() *Deployment {
 // force remove a process: mark its tasks unassigned, remove from job, rebalance (assign the tasks to other procs)
 func (p *Process) Remove() error {
 
-	for _, task := range p.tasks {
-		task.State = TaskStateUnassigned
-		task.SetProcess(nil)
-		task.LastUpdate = time.Now()
+	for _, job := range p.jobs {
+		for _, task := range job.tasks {
+			task.State = TaskStateUnassigned
+			task.SetProcess(nil)
+			task.LastUpdate = time.Now()
+		}
 	}
 
 	p.removingTasks = true
@@ -128,24 +133,31 @@ func (p *Process) Remove() error {
 
 // Request to stop all process tasks
 func (p *Process) ClearTasks() error {
-	if len(p.tasks) == 0 {
-		return nil
-	}
-	p.removingTasks = true
+	hadTasks := false
 
-	for _, task := range p.tasks {
-		task.State = TaskStateStopping
+	for _, job := range p.jobs {
+		for _, task := range job.tasks {
+			task.State = TaskStateStopping
+			hadTasks = true
+		}
 	}
 
-	return p.PushUpdates()
+	if hadTasks {
+		p.removingTasks = true
+		return p.PushUpdates()
+	}
+
+	return nil
 }
 
 // return list of tasks assigned to this proc
 func (p *Process) GetTasks(active bool) []*Task {
 	list := []*Task{}
-	for _, task := range p.tasks {
-		if !active || task.State != TaskStateStopping {
-			list = append(list, task)
+	for _, job := range p.jobs {
+		for _, task := range job.tasks {
+			if !active || task.State != TaskStateStopping {
+				list = append(list, task)
+			}
 		}
 	}
 	return list
@@ -153,9 +165,12 @@ func (p *Process) GetTasks(active bool) []*Task {
 
 // return task based on Id and Job name
 func (p *Process) GetTask(job string, id int) *Task {
-	for _, task := range p.tasks {
-		if task.Id == id && task.job.Name == job {
-			return task
+	j, ok := p.jobs[job]
+	if ok {
+		for _, task := range j.tasks {
+			if task.Id == id {
+				return task
+			}
 		}
 	}
 	return nil
@@ -167,18 +182,26 @@ func (p *Process) AddTasks(tasks []*Task) {
 		task.State = TaskStateAlloc
 		task.SetProcess(p)
 		task.LastUpdate = time.Now()
-	}
 
-	p.tasks = append(p.tasks, tasks...)
+		jobName := task.job.Name
+		_, ok := p.jobs[jobName]
+		if !ok {
+			p.jobs[jobName] = &procJob{job: task.job}
+		}
+		p.jobs[jobName].tasks = append(p.jobs[jobName].tasks, task)
+	}
 
 }
 
 // remove specific task from Process
 func (p *Process) RemoveTask(job string, id int) {
-	for i, task := range p.tasks {
-		if task.Id == id && task.job.Name == job {
-			p.tasks = append(p.tasks[:i], p.tasks[i+1:]...)
-			return
+	j, ok := p.jobs[job]
+	if ok {
+		for i, task := range j.tasks {
+			if task.Id == id {
+				p.jobs[job].tasks = append(p.jobs[job].tasks[:i], p.jobs[job].tasks[i+1:]...)
+				return
+			}
 		}
 	}
 }
@@ -189,11 +212,17 @@ func (p *Process) StopNTasks(toDelete int) {
 		return
 	}
 
-	for i, task := range p.tasks {
-		task.State = TaskStateStopping
-		if i == toDelete-1 {
-			break
+	taskStopped := 0
+	// TODO Balance stop tasks across jobs (currently will stop all per job & move to next, maybe ok)
+	for _, job := range p.jobs {
+		for _, task := range job.tasks {
+			task.State = TaskStateStopping
+			taskStopped += 1
+			if taskStopped == toDelete {
+				break
+			}
 		}
+
 	}
 }
 
@@ -246,70 +275,73 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest bool) error {
 	jobsToSave := map[string]*Job{}
 
 	// Update state of currently allocated tasks
-	for _, msgTask := range msg.Tasks {
-		taskID := msgTask.Id
-		job, ok := p.deployment.jobs[msgTask.Job]
-		if !ok {
-			p.logger.ErrorWith("Task job (name) not found under deployment", "processor", p.Name, "task", taskID, "job", msgTask.Job)
-			hadTaskError = true
-			continue
-		}
-		if taskID >= job.TotalTasks {
-			p.logger.ErrorWith("Illegal TaskID, greater than total tasks #", "processor", p.Name, "task", taskID, "job", msgTask.Job)
-			hadTaskError = true
-			continue
-		}
+	for jobName, job := range msg.Jobs {
+		for _, msgTask := range job.Tasks {
+			taskID := msgTask.Id
+			job, ok := p.deployment.jobs[jobName]
+			if !ok {
+				p.logger.ErrorWith("Task job (name) not found under deployment", "processor", p.Name, "task", taskID, "job", jobName)
+				hadTaskError = true
+				continue
+			}
+			if taskID >= job.TotalTasks {
+				p.logger.ErrorWith("Illegal TaskID, greater than total tasks #", "processor", p.Name, "task", taskID, "job", jobName)
+				hadTaskError = true
+				continue
+			}
 
-		task := job.tasks[taskID]
+			task := job.tasks[taskID]
 
-		// TODO: if task.process = nil, after dealer restart, we need to assign this task to the process
+			// TODO: if task.process = nil, after dealer restart, we need to assign this task to the process
 
-		// verify the reporting process is the true owner of that task, we may have already re-alocated it
-		if task.process != nil && task.process.Name != p.Name {
-			p.logger.ErrorWith("Task process is null or mapped to a different process", "processor", p.Name, "task", taskID, "job", msgTask.Job)
-			hadTaskError = true
-			continue
-		}
+			// verify the reporting process is the true owner of that task, we may have already re-alocated it
+			if task.process != nil && task.process.Name != p.Name {
+				p.logger.ErrorWith("Task process is null or mapped to a different process", "processor", p.Name, "task", taskID, "job", jobName)
+				hadTaskError = true
+				continue
+			}
 
-		// Do we need to persist job metadata ?
-		if task.CheckPoint != nil && !job.NeedToSave() {
-			jobsToSave[job.Name] = job
-		}
+			// Do we need to persist job metadata ?
+			if task.CheckPoint != nil && !job.NeedToSave() {
+				jobsToSave[job.Name] = job
+			}
 
-		task.LastUpdate = time.Now()
-		task.CheckPoint = msgTask.CheckPoint
-		task.Progress = msgTask.Progress
-		task.Delay = msgTask.Delay
+			task.LastUpdate = time.Now()
+			task.CheckPoint = msgTask.CheckPoint
+			task.Progress = msgTask.Progress
+			task.Delay = msgTask.Delay
 
-		switch msgTask.State {
-		case TaskStateDeleted:
-			task.State = TaskStateUnassigned
-			p.RemoveTask(msgTask.Job, taskID)
-			task.SetProcess(nil)
-			tasksDeleted = true
-		case TaskStateStopping:
-			// Tasks are still in Stopping state, so we keep the process in removingTasks state
-			tasksStopping = true
-		case TaskStateCompleted:
-			if task.State != TaskStateCompleted {
-				// if this is the first time we get completion we add the task to completed and save list
-				job.CompletedTasks = append(job.CompletedTasks, taskID)
-				if !job.NeedToSave() {
-					jobsToSave[job.Name] = job
+			switch msgTask.State {
+			case TaskStateDeleted:
+				task.State = TaskStateUnassigned
+				p.RemoveTask(jobName, taskID)
+				task.SetProcess(nil)
+				tasksDeleted = true
+			case TaskStateStopping:
+				// Tasks are still in Stopping state, so we keep the process in removingTasks state
+				tasksStopping = true
+			case TaskStateCompleted:
+				if task.State != TaskStateCompleted {
+					// if this is the first time we get completion we add the task to completed and save list
+					job.CompletedTasks = append(job.CompletedTasks, taskID)
+					if !job.NeedToSave() {
+						jobsToSave[job.Name] = job
+					}
 				}
-			}
-			task.State = msgTask.State
-			p.RemoveTask(msgTask.Job, taskID)
-			task.SetProcess(nil)
-		case TaskStateRunning:
-			// verify its a legal transition (e.g. we didnt ask to stop and got an old update)
-			if task.State == TaskStateRunning || task.State == TaskStateAlloc {
 				task.State = msgTask.State
+				p.RemoveTask(jobName, taskID)
+				task.SetProcess(nil)
+			case TaskStateRunning:
+				// verify its a legal transition (e.g. we didnt ask to stop and got an old update)
+				if task.State == TaskStateRunning || task.State == TaskStateAlloc {
+					task.State = msgTask.State
+				}
+			default:
+				p.logger.ErrorWith("illegal returned state in task ID", "processor", p.Name, "task", taskID, "job", jobName, "state", msgTask.State)
+				hadTaskError = true
+				continue
 			}
-		default:
-			p.logger.ErrorWith("illegal returned state in task ID", "processor", p.Name, "task", taskID, "job", msgTask.Job, "state", msgTask.State)
-			hadTaskError = true
-			continue
+
 		}
 
 	}
@@ -344,14 +376,14 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest bool) error {
 // return an enriched process struct for API
 func (p *Process) GetProcessState() *ProcessMessage {
 	msg := ProcessMessage{BaseProcess: p.BaseProcess}
-	msg.Tasks = []TaskMessage{}
 	msg.Jobs = map[string]JobShort{}
 
-	for _, task := range p.tasks {
-		msg.Tasks = append(msg.Tasks, TaskMessage{BaseTask: task.BaseTask, Job: task.job.Name})
-		if _, ok := msg.Jobs[task.job.Name]; !ok {
-			msg.Jobs[task.job.Name] = JobShort{TotalTasks: task.job.TotalTasks, Metadata: task.job.Metadata}
+	for jobName, job := range p.jobs {
+		taskList := []TaskMessage{}
+		for _, task := range job.tasks {
+			taskList = append(taskList, TaskMessage{BaseTask: task.BaseTask})
 		}
+		msg.Jobs[jobName] = JobShort{TotalTasks: job.job.TotalTasks, Metadata: job.job.Metadata, Tasks: taskList}
 	}
 
 	return &msg
@@ -359,21 +391,23 @@ func (p *Process) GetProcessState() *ProcessMessage {
 
 // emulate a process locally, unused, may be broken
 func (p *Process) emulateProcess() {
-	tasklist := []TaskMessage{}
-	for _, task := range p.tasks {
-		taskmsg := TaskMessage{BaseTask: task.BaseTask, Job: task.job.Name}
-		switch task.State {
-		case TaskStateStopping:
-			taskmsg.State = TaskStateDeleted
-		default:
-			taskmsg.State = TaskStateRunning
-		}
-		tasklist = append(tasklist, taskmsg)
-	}
-	p.logger.DebugWith("emulateProcess", "processor", p.Name, "tasks", tasklist)
 
 	msg := ProcessMessage{BaseProcess: p.BaseProcess}
-	msg.Tasks = tasklist
+	for jobName, job := range p.jobs {
+		taskList := []TaskMessage{}
+		for _, task := range job.tasks {
+			taskmsg := TaskMessage{BaseTask: task.BaseTask}
+			switch task.State {
+			case TaskStateStopping:
+				taskmsg.State = TaskStateDeleted
+			default:
+				taskmsg.State = TaskStateRunning
+			}
+			taskList = append(taskList, taskmsg)
+		}
+		msg.Jobs[jobName] = JobShort{TotalTasks: job.job.TotalTasks, Metadata: job.job.Metadata, Tasks: taskList}
+	}
+	p.logger.DebugWith("emulateProcess", "processor", p.Name, "jobs", p.jobs)
 
 	go func() {
 		time.Sleep(time.Second)
