@@ -83,7 +83,9 @@ func (dm *DeploymentMap) UpdateDeployment(deployment *Deployment) error {
 					// TODO: change deployment expected (and rebalance)
 
 					dep.ExpectedProc = deployment.ExpectedProc
-					dep.Rebalance()
+					if dep.ExpectedProc != 0 {
+						dep.Rebalance()
+					}
 
 				}
 			}
@@ -154,6 +156,7 @@ func (dm *DeploymentMap) RemoveDeployment(namespace, function, version string) e
 
 	for i, dep := range list {
 		if dep.Version == version {
+			dm.logger.DebugWith("Removing Deployment", "deployment", dep)
 			err := dep.ClearDeployment()
 			if err != nil {
 				dm.logger.ErrorWith("Failed to clear deployment", "deploy", dep.Name, "err", err)

@@ -18,43 +18,43 @@ package jobs
 
 import (
 	"fmt"
-	"time"
 	"net/http"
+	"time"
 )
 
 type Job struct {
-	ctx                *ManagerContext
-	Name               string                `json:"name"`
+	ctx  *ManagerContext
+	Name string `json:"name"`
 	// Job to function association (namespace, function, version/alias)
-	Namespace          string                `json:"namespace"`
-	Function           string                `json:"function"`
-	Version            string                `json:"version,omitempty"`
+	Namespace string `json:"namespace"`
+	Function  string `json:"function"`
+	Version   string `json:"version,omitempty"`
 	// when true the job is suspended
-	Suspend            bool                  `json:"suspend,omitempty"`
+	Suspend bool `json:"suspend,omitempty"`
 	// The start time of the job
-	StartTime          time.Time             `json:"startTime,omitempty"`
+	StartTime time.Time `json:"startTime,omitempty"`
 	// Total number of tasks to be distributed to workers
-	TotalTasks         int                   `json:"totalTasks"`
+	TotalTasks int `json:"totalTasks"`
 	// Maximum Job tasks executed per processor at a given time
-	MaxTaskAllocation  int                   `json:"maxTaskAllocation,omitempty"`
-	// the Job was created from a deployment (function) spec vs submitted directly to the dealer
-	fromDeployment     bool
+	MaxTaskAllocation int `json:"maxTaskAllocation,omitempty"`
+	// the Job was created after the deployment (function) creation, i.e. submitted directly to the dealer
+	postDeployment bool
 	// List of completed tasks
-	CompletedTasks     []int                 `json:"completedTasks,omitempty"`
+	CompletedTasks []int `json:"completedTasks,omitempty"`
 	// Job can spawn multiple versions (e.g. Canary Deployment)
-	IsMultiVersion     bool                  `json:"isMultiVersion,omitempty"`
+	IsMultiVersion bool `json:"isMultiVersion,omitempty"`
 	// Job need to be saved to persistent storage
-	markedDirty        bool
+	markedDirty bool
 	// Private Job Metadata, will be passed to the processor as is
-	Metadata           interface{}           `json:"metadata,omitempty"`
+	Metadata interface{} `json:"metadata,omitempty"`
 
-	tasks              []*Task
+	tasks []*Task
 }
 
 // Job request and response for the REST API
 type JobMessage struct {
 	Job
-	Tasks  []TaskMessage  `json:"tasks"`
+	Tasks []TaskMessage `json:"tasks"`
 }
 
 func (j *JobMessage) Bind(r *http.Request) error {
@@ -64,7 +64,6 @@ func (j *JobMessage) Bind(r *http.Request) error {
 func (j *JobMessage) Render(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
-
 
 // create a new job, add critical Metadata, and initialize Tasks struct
 func NewJob(context *ManagerContext, newJob *Job) (*Job, error) {
@@ -78,16 +77,15 @@ func NewJob(context *ManagerContext, newJob *Job) (*Job, error) {
 
 	// Initialize an array of tasks based on the TotalTasks value
 	newJob.tasks = make([]*Task, newJob.TotalTasks)
-	for i:=0; i<newJob.TotalTasks; i++ {
+	for i := 0; i < newJob.TotalTasks; i++ {
 		newJob.tasks[i] = NewTask(i, newJob)
 	}
 
 	return newJob, nil
 }
 
-
 func (j *Job) AsString() string {
-	return fmt.Sprintf("%s (%d): {Comp: %d} ",j.Name, j.TotalTasks, j.CompletedTasks)
+	return fmt.Sprintf("%s (%d): {Comp: %d} ", j.Name, j.TotalTasks, j.CompletedTasks)
 }
 
 // return Job message with list of job tasks
@@ -96,7 +94,7 @@ func (j *Job) GetJobState() *JobMessage {
 	jobMessage.Tasks = []TaskMessage{}
 
 	for _, task := range j.tasks {
-		jobMessage.Tasks = append(jobMessage.Tasks, task.ToMessage() )
+		jobMessage.Tasks = append(jobMessage.Tasks, task.ToMessage())
 	}
 	return &jobMessage
 }
@@ -108,7 +106,7 @@ func (j *Job) findUnallocTask(num int, from *int) []*Task {
 		return list
 	}
 
-	for i := *from; i < j.TotalTasks; i++  {
+	for i := *from; i < j.TotalTasks; i++ {
 		if j.tasks[i].State == TaskStateUnassigned {
 			list = append(list, j.tasks[i])
 		}

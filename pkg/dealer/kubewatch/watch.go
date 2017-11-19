@@ -1,20 +1,20 @@
 package kubewatch
 
 import (
-	"time"
-	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/watch"
-	"k8s.io/api/core/v1"
-	"k8s.io/api/apps/v1beta1"
+	"fmt"
 	"github.com/nuclio/nuclio-sdk"
 	"github.com/nuclio/nuclio/pkg/dealer/jobs"
 	"github.com/yaronha/kubetest/xendor/k8s.io/client-go/pkg/util/json"
-	"fmt"
+	"k8s.io/api/apps/v1beta1"
+	"k8s.io/api/core/v1"
+	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/tools/clientcmd"
+	"time"
 )
 
 func GetClientConfig(kubeconfig string) (*rest.Config, error) {
@@ -26,27 +26,26 @@ func GetClientConfig(kubeconfig string) (*rest.Config, error) {
 
 type Watcher struct {
 	managerContext *jobs.ManagerContext
-	logger     nuclio.Logger
-	namespace  string
+	logger         nuclio.Logger
+	namespace      string
 }
 
 func (w *Watcher) dispatchChange(message *jobs.RequestMessage) {
 	/*
-	w.logger.DebugWith("Dispatching change",
-		"kind", message.Type,
-		"name", message.Name,
-		"function", message.Function,
-		"obj", message.Object)
+		w.logger.DebugWith("Dispatching change",
+			"kind", message.Type,
+			"name", message.Name,
+			"function", message.Function,
+			"obj", message.Object)
 	*/
 
 	w.managerContext.RequestsChannel <- message
 }
 
-
 func NewPodWatcher(client *kubernetes.Clientset, managerContext *jobs.ManagerContext, logger nuclio.Logger, namespace string) error {
 	newWatcher := &Watcher{
-		logger:     logger.GetChild("podWatcher").(nuclio.Logger),
-		namespace:  namespace,
+		logger:         logger.GetChild("podWatcher").(nuclio.Logger),
+		namespace:      namespace,
 		managerContext: managerContext,
 	}
 
@@ -68,32 +67,32 @@ func NewPodWatcher(client *kubernetes.Clientset, managerContext *jobs.ManagerCon
 	_, controller := cache.NewInformer(
 		listWatch,
 		&v1.Pod{},
-		time.Minute * 10,
+		time.Minute*10,
 		cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
 				proc := getProcStruct(obj.(*v1.Pod))
 				proc.State = getPodState(obj.(*v1.Pod))
 				newWatcher.dispatchChange(&jobs.RequestMessage{
-					Type:jobs.RequestTypeProcUpdateState, Object:proc})
+					Type: jobs.RequestTypeProcUpdateState, Object: proc})
 			},
 			DeleteFunc: func(obj interface{}) {
 				proc := getProcStruct(obj.(*v1.Pod))
 				proc.State = jobs.ProcessStateDelete
 				newWatcher.dispatchChange(&jobs.RequestMessage{
 					Name: proc.Name, Namespace: proc.Namespace,
-					Type:jobs.RequestTypeProcDel, Object:proc})
+					Type: jobs.RequestTypeProcDel, Object: proc})
 			},
-			UpdateFunc:func(oldObj, newObj interface{}) {
+			UpdateFunc: func(oldObj, newObj interface{}) {
 				oldPod := oldObj.(*v1.Pod)
 				newPod := newObj.(*v1.Pod)
 				if oldPod.ResourceVersion != newPod.ResourceVersion {
 					proc := getProcStruct(newPod)
 					proc.State = getPodState(newPod)
 					newWatcher.dispatchChange(&jobs.RequestMessage{
-						Type:jobs.RequestTypeProcUpdateState, Object:proc})
+						Type: jobs.RequestTypeProcUpdateState, Object: proc})
 				} else {
 					newWatcher.dispatchChange(&jobs.RequestMessage{
-						Type:jobs.RequestTypeProcHealth, Name:newPod.Name, Namespace: newPod.Namespace})
+						Type: jobs.RequestTypeProcHealth, Name: newPod.Name, Namespace: newPod.Namespace})
 				}
 			},
 		},
@@ -111,7 +110,7 @@ func getProcStruct(pod *v1.Pod) *jobs.BaseProcess {
 		Function: pod.Labels["name"],
 		Version:  pod.Labels["version"],
 		Alias:    pod.Labels["alias"],
-		IP: pod.Status.PodIP,
+		IP:       pod.Status.PodIP,
 	}
 	return &proc
 }
@@ -145,13 +144,10 @@ func isPodNewer(a *v1.Pod, b *v1.Pod) bool {
 	return t2.Before(t1)
 }
 
-
-
-
 func NewDeployWatcher(client *kubernetes.Clientset, managerContext *jobs.ManagerContext, logger nuclio.Logger, namespace string) error {
 	newWatcher := &Watcher{
-		logger:     logger.GetChild("deployWatcher").(nuclio.Logger),
-		namespace:  namespace,
+		logger:         logger.GetChild("deployWatcher").(nuclio.Logger),
+		namespace:      namespace,
 		managerContext: managerContext,
 	}
 
@@ -173,24 +169,24 @@ func NewDeployWatcher(client *kubernetes.Clientset, managerContext *jobs.Manager
 	_, controller := cache.NewInformer(
 		listWatch,
 		&v1beta1.Deployment{},
-		time.Minute * 10,
+		time.Minute*10,
 		cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
 				dep := getDeployStruct(obj.(*v1beta1.Deployment))
 				newWatcher.dispatchChange(&jobs.RequestMessage{
-					Type:jobs.RequestTypeDeployUpdate, Object:dep})
+					Type: jobs.RequestTypeDeployUpdate, Object: dep})
 			},
 			DeleteFunc: func(obj interface{}) {
 				dep := getDeployStruct(obj.(*v1beta1.Deployment))
 				newWatcher.dispatchChange(&jobs.RequestMessage{
-					Type:jobs.RequestTypeDeployRemove, Object:dep})
+					Type: jobs.RequestTypeDeployRemove, Object: dep})
 			},
-			UpdateFunc:func(oldObj, newObj interface{}) {
+			UpdateFunc: func(oldObj, newObj interface{}) {
 				oldDep := oldObj.(*v1beta1.Deployment)
 				newDep := newObj.(*v1beta1.Deployment)
 				if oldDep.ObjectMeta.Generation != newDep.ObjectMeta.Generation {
 					newWatcher.dispatchChange(&jobs.RequestMessage{
-						Type:jobs.RequestTypeDeployUpdate, Object: getDeployStruct(newDep)})
+						Type: jobs.RequestTypeDeployUpdate, Object: getDeployStruct(newDep)})
 				}
 			},
 		},
@@ -205,9 +201,9 @@ func NewDeployWatcher(client *kubernetes.Clientset, managerContext *jobs.Manager
 func getDeployStruct(deploy *v1beta1.Deployment) *jobs.Deployment {
 	dep := jobs.Deployment{
 		Name: deploy.Name, Namespace: deploy.Namespace,
-		Function: deploy.Labels["name"],
-		Version:  deploy.Labels["version"],
-		Alias:    deploy.Labels["alias"],
+		Function:     deploy.Labels["name"],
+		Version:      deploy.Labels["version"],
+		Alias:        deploy.Labels["alias"],
 		ExpectedProc: int(*deploy.Spec.Replicas),
 	}
 
@@ -218,10 +214,10 @@ func getDeployStruct(deploy *v1beta1.Deployment) *jobs.Deployment {
 		if err == nil {
 			dep.Triggers = []*jobs.Trigger{}
 			for name, trigger := range fn.Triggers {
-				dep.Triggers = append(dep.Triggers, &jobs.Trigger{Name:name, TotalTasks:trigger.Partitions})
+				dep.Triggers = append(dep.Triggers, &jobs.Trigger{Name: name, TotalTasks: trigger.Partitions, MaxTaskAllocation: trigger.MaxTasks})
 			}
 		} else {
-			fmt.Println("err",funcJson)
+			fmt.Println("err", funcJson)
 		}
 		//fmt.Println(fn)
 
@@ -231,12 +227,12 @@ func getDeployStruct(deploy *v1beta1.Deployment) *jobs.Deployment {
 }
 
 type funcStruct struct {
-	Triggers map[string]trigStruct  `json:"triggers"`
+	Triggers map[string]trigStruct `json:"triggers"`
 }
 
 type trigStruct struct {
-	Class       string       `json:"class"`
-	Kind        string       `json:"kind"`
-	Partitions  int          `json:"partitions"`
+	Class      string `json:"class"`
+	Kind       string `json:"kind"`
+	Partitions int    `json:"partitions"`
+	MaxTasks   int    `json:"maxTasks"`
 }
-

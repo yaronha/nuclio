@@ -116,6 +116,12 @@ func (p *Process) GetDeployment() *Deployment {
 	return p.deployment
 }
 
+// Clear Deployment and Jobs (when deleting the deployment and the processes remain)
+func (p *Process) ClearAll() {
+	p.deployment = nil
+	p.jobs = map[string]*procJob{}
+}
+
 // force remove a process: mark its tasks unassigned, remove from job, rebalance (assign the tasks to other procs)
 func (p *Process) Remove() error {
 
@@ -161,6 +167,24 @@ func (p *Process) GetTasks(active bool) []*Task {
 		}
 	}
 	return list
+}
+
+// return list of tasks assigned to this proc
+func (p *Process) GetJobTasksLen(job string, active bool) int {
+	total := 0
+	j, ok := p.jobs[job]
+	if ok {
+		if !active {
+			return len(j.tasks)
+		}
+		for _, task := range j.tasks {
+			if task.State != TaskStateStopping {
+				total += 1
+			}
+		}
+	}
+
+	return total
 }
 
 // return task based on Id and Job name

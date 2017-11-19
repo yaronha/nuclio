@@ -6,26 +6,24 @@ import (
 	"net/http"
 )
 
-
 type Deployment struct {
-	dm            *DeploymentMap
-	Namespace     string                `json:"namespace"`
-	Function      string                `json:"function"`
-	Name          string                `json:"name"`
-	Version       string                `json:"version,omitempty"`
-	Alias         string                `json:"alias,omitempty"`
+	dm        *DeploymentMap
+	Namespace string `json:"namespace"`
+	Function  string `json:"function"`
+	Name      string `json:"name"`
+	Version   string `json:"version,omitempty"`
+	Alias     string `json:"alias,omitempty"`
 
-	Triggers      []*Trigger            `json:"triggers,omitempty"`
-	ExpectedProc  int                   `json:"expectedProc,omitempty"`
-	procs         map[string]*Process
-	jobs          map[string]*Job
-
+	Triggers     []*Trigger `json:"triggers,omitempty"`
+	ExpectedProc int        `json:"expectedProc,omitempty"`
+	procs        map[string]*Process
+	jobs         map[string]*Job
 }
 
 type DeploymentMessage struct {
 	Deployment
 	Processes []string
-	Jobs []string
+	Jobs      []string
 }
 
 func (d *DeploymentMessage) Bind(r *http.Request) error {
@@ -36,15 +34,14 @@ func (d *DeploymentMessage) Render(w http.ResponseWriter, r *http.Request) error
 	return nil
 }
 
-
 type Trigger struct {
-	Name               string                `json:"name"`
-	TotalTasks         int                   `json:"totalTasks"`
-	MaxTaskAllocation  int                   `json:"maxTaskAllocation,omitempty"`
-	MinProcesses       int                   `json:"minProcesses,omitempty"`
-	MaxProcesses       int                   `json:"maxProcesses,omitempty"`
-	Metadata           interface{}           `json:"metadata,omitempty"`
-	IsMultiVersion     bool                  `json:"isMultiVersion,omitempty"`
+	Name              string      `json:"name"`
+	TotalTasks        int         `json:"totalTasks"`
+	MaxTaskAllocation int         `json:"maxTaskAllocation,omitempty"`
+	MinProcesses      int         `json:"minProcesses,omitempty"`
+	MaxProcesses      int         `json:"maxProcesses,omitempty"`
+	Metadata          interface{} `json:"metadata,omitempty"`
+	IsMultiVersion    bool        `json:"isMultiVersion,omitempty"`
 }
 
 func (d *Deployment) AddProcess(proc *Process) {
@@ -56,7 +53,7 @@ func (d *Deployment) AddProcess(proc *Process) {
 func (d *Deployment) RemoveProcess(proc *Process) error {
 
 	err := proc.Remove()
-	if err !=nil {
+	if err != nil {
 		return errors.Wrap(err, "Failed to remove process")
 	}
 
@@ -65,7 +62,6 @@ func (d *Deployment) RemoveProcess(proc *Process) error {
 
 	return d.Rebalance()
 }
-
 
 func (d *Deployment) GetProcs() map[string]*Process {
 	return d.procs
@@ -76,7 +72,7 @@ func (d *Deployment) GetJobs() map[string]*Job {
 }
 
 func (d *Deployment) GetDeploymentState() *DeploymentMessage {
-	dep := DeploymentMessage{Deployment:*d}
+	dep := DeploymentMessage{Deployment: *d}
 	dep.Processes = []string{}
 	dep.Jobs = []string{}
 
@@ -103,21 +99,20 @@ func (d *Deployment) AllocateTasks(proc *Process) error {
 
 	totalTasks := d.SumTasks()
 	tasksPerProc := totalTasks / d.ExpectedProc
-	taskReminder := totalTasks - d.ExpectedProc * tasksPerProc
+	taskReminder := totalTasks - d.ExpectedProc*tasksPerProc
 	var totalAsigned, procTasks, aboveMin int
-
 
 	for _, p := range d.procs {
 		procTasks = len(p.GetTasks(true))
 		totalAsigned += procTasks
 		if procTasks > tasksPerProc {
-			aboveMin +=1
+			aboveMin += 1
 		}
 	}
 
 	totalUnallocated := totalTasks - totalAsigned
 	if totalUnallocated < 0 {
-		return fmt.Errorf("Assigned Tasks (%d) greater than Total tasks (%d)",totalAsigned,totalTasks)
+		return fmt.Errorf("Assigned Tasks (%d) greater than Total tasks (%d)", totalAsigned, totalTasks)
 	}
 	if totalUnallocated == 0 {
 		return nil
@@ -128,30 +123,28 @@ func (d *Deployment) AllocateTasks(proc *Process) error {
 		alloc += 1
 	}
 
-	//if j.MaxTaskAllocation > 0 && alloc > j.MaxTaskAllocation {
-	//	alloc = j.MaxTaskAllocation
-	//}
-
 	newAlloc := alloc - len(proc.GetTasks(true))
 	if totalUnallocated <= newAlloc {
 		newAlloc = totalUnallocated
 	}
 
 	_, err := d.addTasks2Proc(proc, newAlloc, totalTasks)
-	if err !=nil {
+	if err != nil {
 		return errors.Wrap(err, "Failed to add tasks")
 	}
 
 	return err
 }
 
-
-
 func (d *Deployment) Rebalance() error {
+
+	if d.ExpectedProc == 0 {
+		return nil
+	}
 
 	totalTasks := d.SumTasks()
 	tasksPerProc := totalTasks / d.ExpectedProc
-	taskReminder := totalTasks - d.ExpectedProc * tasksPerProc
+	taskReminder := totalTasks - d.ExpectedProc*tasksPerProc
 
 	var procTasks, missingPlus1, extraPlus1 int
 	var tasksUnder, tasksEqual, tasksPlus1, tasksOver []*Process
@@ -164,7 +157,7 @@ func (d *Deployment) Rebalance() error {
 				tasksUnder = append(tasksUnder, p)
 			case procTasks == tasksPerProc:
 				tasksEqual = append(tasksEqual, p)
-			case procTasks == tasksPerProc + 1:
+			case procTasks == tasksPerProc+1:
 				tasksPlus1 = append(tasksPlus1, p)
 			default:
 				tasksOver = append(tasksOver, p)
@@ -172,7 +165,7 @@ func (d *Deployment) Rebalance() error {
 		}
 	}
 
-	d.dm.logger.DebugWith("Rebalance","deployment",d.Name, "expProcs", d.ExpectedProc, "procs", len(d.procs),
+	d.dm.logger.DebugWith("Rebalance", "deployment", d.Name, "expProcs", d.ExpectedProc, "procs", len(d.procs),
 		"totTasks", totalTasks, "under", len(tasksUnder), "eq", len(tasksEqual), "plus1", len(tasksPlus1), "over", len(tasksOver))
 
 	// desired state is: N with tasksPerProc+1, newnum-N with tasksPerProc (N=taskReminder)
@@ -188,10 +181,10 @@ func (d *Deployment) Rebalance() error {
 	for _, p := range tasksOver {
 		tasks := p.GetTasks(true)
 		if missingPlus1 > 0 {
-			p.StopNTasks(len(tasks)-tasksPerProc-1)
+			p.StopNTasks(len(tasks) - tasksPerProc - 1)
 			missingPlus1 -= 1
 		} else {
-			p.StopNTasks(len(tasks)-tasksPerProc)
+			p.StopNTasks(len(tasks) - tasksPerProc)
 		}
 		p.removingTasks = true
 		_ = p.PushUpdates()
@@ -217,15 +210,10 @@ func (d *Deployment) Rebalance() error {
 			usedPlus1 = true
 		}
 
-		//if j.MaxTaskAllocation != 0 && desired > j.MaxTaskAllocation {
-		//	desired = j.MaxTaskAllocation
-		//	usedPlus1 = false
-		//}
-
 		newAlloc := desired - len(p.GetTasks(true))
-		d.dm.logger.DebugWith("Rebalance - add tasks to proc","proc",p.AsString(), "alloc", newAlloc, "missP1", missingPlus1, "remove", p.removingTasks)
+		d.dm.logger.DebugWith("Rebalance - add tasks to proc", "proc", p.AsString(), "alloc", newAlloc, "missP1", missingPlus1, "remove", p.removingTasks)
 		added, err := d.addTasks2Proc(p, newAlloc, totalTasks)
-		if err !=nil {
+		if err != nil {
 			return errors.Wrap(err, "Failed to add tasks")
 		}
 		if added < newAlloc {
@@ -240,24 +228,34 @@ func (d *Deployment) Rebalance() error {
 	return nil
 }
 
-
 func (d *Deployment) addTasks2Proc(proc *Process, toAdd, totalTasks int) (int, error) {
 	if toAdd == 0 {
 		return 0, nil
 	}
 	type jobRec struct {
-		job *Job
+		job  *Job
 		from int
 	}
 	jobList := []jobRec{}
-	added :=0
+	added := 0
 
 	// TODO: Handle batch allocations (with MaxAllocation of tasks per process/job)
 
 	// First pass, give each job more tasks based on its share
 	for _, j := range d.jobs {
-		rec := jobRec{job:j}
-		share := int( float64(toAdd * j.TotalTasks) / float64(totalTasks) + 0.5)
+		rec := jobRec{job: j}
+		share := int(float64(toAdd*j.TotalTasks)/float64(totalTasks) + 0.5)
+		maxAllocated := false
+
+		// Make sure task allocation doesnt exceed job.MaxTaskAllocation (per process)
+		if j.MaxTaskAllocation > 0 {
+			d.dm.logger.DebugWith("addTasks2Proc - MaxAlloc", "proc", proc.AsString(), "share", share, "MaxTask", j.MaxTaskAllocation)
+			if tasksLen := proc.GetJobTasksLen(j.Name, true); share+tasksLen > j.MaxTaskAllocation {
+				share = j.MaxTaskAllocation - tasksLen
+				maxAllocated = true
+			}
+		}
+
 		toAlloc := j.findUnallocTask(share, &rec.from)
 		toAllocLen := len(toAlloc)
 
@@ -269,10 +267,10 @@ func (d *Deployment) addTasks2Proc(proc *Process, toAdd, totalTasks int) (int, e
 			}
 		}
 
-		// if toAlloc < share it means this job is fully allocated and can be skipped in next round
+		// if toAlloc < share it means this job is fully allocated and can be skipped in next round (if didnt get to Max)
 		// Prepend, so last job will go first in next allocation round
-		if share == toAllocLen {
-			jobList = append( []jobRec{rec}, jobList...)
+		if share == toAllocLen && !maxAllocated {
+			jobList = append([]jobRec{rec}, jobList...)
 		}
 	}
 
@@ -297,7 +295,6 @@ func (d *Deployment) addTasks2Proc(proc *Process, toAdd, totalTasks int) (int, e
 		jobList = newList
 	}
 
-
 	return added, nil
 }
 
@@ -308,9 +305,9 @@ func (d *Deployment) updateJobs() error {
 		_, ok := d.jobs[rjob.Name]
 		if !ok {
 			// if this deployment doesnt contain the Job, create and add one
-			newJob := &Job{Name:rjob.Name, Namespace:d.Namespace,
-				Function:d.Function, Version:d.Version,
-				TotalTasks:rjob.TotalTasks, MaxTaskAllocation:rjob.MaxTaskAllocation,
+			newJob := &Job{Name: rjob.Name, Namespace: d.Namespace,
+				Function: d.Function, Version: d.Version,
+				TotalTasks: rjob.TotalTasks, MaxTaskAllocation: rjob.MaxTaskAllocation,
 			}
 			job, err := NewJob(d.dm.ctx, newJob)
 			if err != nil {
@@ -318,7 +315,7 @@ func (d *Deployment) updateJobs() error {
 			}
 
 			d.jobs[rjob.Name] = job
-			d.dm.logger.DebugWith("Added new job to function","function",d.Name,"job",rjob.Name,"tasks", rjob.TotalTasks)
+			d.dm.logger.DebugWith("Added new job to function", "function", d.Name, "job", rjob.Name, "tasks", rjob.TotalTasks)
 		}
 
 	}
@@ -343,7 +340,6 @@ func (d *Deployment) AddJob(job *Job) error {
 	return nil
 }
 
-
 // TODO: unused, remove job while the deployment is working
 func (d *Deployment) RemoveJob(job *Job, force bool) error {
 
@@ -355,6 +351,11 @@ func (d *Deployment) RemoveJob(job *Job, force bool) error {
 
 // TODO: clear all deployment resources before a delete
 func (d *Deployment) ClearDeployment() error {
+
+	// delete links from proc to jobs and deployments
+	for _, proc := range d.procs {
+		proc.ClearAll()
+	}
 
 	return nil
 }

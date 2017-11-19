@@ -114,7 +114,6 @@ func (jm *JobManager) Start() error {
 					req.ReturnChan <- &jobs.RespChanType{Err: nil, Object: list}
 
 				case jobs.RequestTypeJobUpdate:
-					// TODO: consider what need to allow in update
 					job, err := jm.getJob(req.Namespace, req.Function, req.Name)
 					if err != nil {
 						req.ReturnChan <- &jobs.RespChanType{Err: err, Object: job}
@@ -269,6 +268,8 @@ func (jm *JobManager) removeJob(name, namespace string) error {
 // TODO: change to update various runtime job params
 func (jm *JobManager) updateJob(oldJob, newjob *jobs.JobMessage) error {
 
+	// TODO: consider what need to allow in update and habdle it (currently ignored)
+	// e.g. update MaxAllocation, Job to Version assosiation, Metadata, TotalTasks
 	jm.logger.InfoWith("Update a job", "old", oldJob, "new", newjob)
 
 	return nil
@@ -286,9 +287,12 @@ func (jm *JobManager) removeProcess(name, namespace string) error {
 	}
 
 	dep := proc.GetDeployment()
-	err := dep.RemoveProcess(proc)
-	if err != nil {
-		return err
+	// proc.Deployment can be nil if the deployment was removed before the process
+	if dep != nil {
+		err := dep.RemoveProcess(proc)
+		if err != nil {
+			return err
+		}
 	}
 	delete(jm.Processes, key)
 	return nil
