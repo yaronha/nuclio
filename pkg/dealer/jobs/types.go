@@ -17,22 +17,24 @@ limitations under the License.
 package jobs
 
 import (
+	"github.com/nuclio/nuclio-sdk"
 	"github.com/nuclio/nuclio/pkg/dealer/client"
 )
 
 type ManagerContext struct {
-	RequestsChannel  chan *RequestMessage
-	OutChannel       chan *client.ChanRequest
-	ProcRespChannel  chan *client.Response
-	Client           *client.AsyncClient
-	DisablePush      bool
+	Logger          nuclio.Logger
+	RequestsChannel chan *RequestMessage
+	OutChannel      chan *client.ChanRequest
+	ProcRespChannel chan *client.Response
+	Client          *client.AsyncClient
+	DisablePush     bool
 }
 
 func (mc *ManagerContext) SubmitReq(request *RequestMessage) (interface{}, error) {
 	respChan := make(chan *RespChanType)
 	request.ReturnChan = respChan
 	mc.RequestsChannel <- request
-	resp := <- respChan
+	resp := <-respChan
 	return resp.Object, resp.Err
 	return nil, nil
 }
@@ -42,13 +44,23 @@ func (mc *ManagerContext) SaveJobs(jobs map[string]*Job) {
 		return
 	}
 
+	mc.Logger.DebugWith("Saving Jobs", "jobs", jobs)
 	// TODO: save jobs state to persistent storage
+}
+
+func (mc *ManagerContext) DeleteJobRecords(jobs map[string]*Job) {
+	if len(jobs) == 0 {
+		return
+	}
+
+	mc.Logger.DebugWith("Deleting Jobs", "jobs", jobs)
+	// TODO: delete jobs state from persistent storage
 }
 
 type RequestType int
 
 const (
-	RequestTypeUnknown      RequestType = iota
+	RequestTypeUnknown RequestType = iota
 
 	RequestTypeJobGet
 	RequestTypeJobDel
@@ -69,15 +81,15 @@ const (
 )
 
 type RespChanType struct {
-	Err error
+	Err    error
 	Object interface{}
 }
 
 type RequestMessage struct {
-	Namespace   string
-	Function    string  // for jobs
-	Name        string
-	Type        RequestType
-	Object      interface{}
-	ReturnChan  chan *RespChanType
+	Namespace  string
+	Function   string // for jobs
+	Name       string
+	Type       RequestType
+	Object     interface{}
+	ReturnChan chan *RespChanType
 }

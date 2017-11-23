@@ -17,21 +17,21 @@ limitations under the License.
 package portal
 
 import (
-	"github.com/go-chi/render"
 	"fmt"
 	"github.com/go-chi/chi"
+	"github.com/go-chi/render"
+	"github.com/nuclio/nuclio-sdk"
 	"github.com/nuclio/nuclio/pkg/dealer/jobs"
 	"net/http"
-	"github.com/nuclio/nuclio-sdk"
 )
 
 func NewJobsPortal(logger nuclio.Logger, managerCtx *jobs.ManagerContext) (*JobsPortal, error) {
-	newJobsPortal := JobsPortal{logger:logger, managerContext:managerCtx}
+	newJobsPortal := JobsPortal{logger: logger, managerContext: managerCtx}
 	return &newJobsPortal, nil
 }
 
 type JobsPortal struct {
-	logger nuclio.Logger
+	logger         nuclio.Logger
 	managerContext *jobs.ManagerContext
 }
 
@@ -41,9 +41,9 @@ func (jp *JobsPortal) getJob(w http.ResponseWriter, r *http.Request) {
 	jobID := chi.URLParam(r, "jobID")
 
 	job, err := jp.managerContext.SubmitReq(&jobs.RequestMessage{
-		Name:jobID, Namespace:namespace, Function:function , Type:jobs.RequestTypeJobGet})
+		Name: jobID, Namespace: namespace, Function: function, Type: jobs.RequestTypeJobGet})
 
-	if err != nil  {
+	if err != nil {
 		http.Error(w, http.StatusText(422), 422)
 		return
 	}
@@ -61,14 +61,14 @@ func (jp *JobsPortal) deleteJob(w http.ResponseWriter, r *http.Request) {
 	jobID := chi.URLParam(r, "jobID")
 
 	_, err := jp.managerContext.SubmitReq(&jobs.RequestMessage{
-		Name:jobID, Namespace:namespace, Function:function, Type:jobs.RequestTypeJobDel})
+		Name: jobID, Namespace: namespace, Function: function, Type: jobs.RequestTypeJobDel})
 
 	if err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
 		return
 	}
 
-	w.Write([]byte(fmt.Sprintf("Deleted job: %s",jobID)))
+	w.Write([]byte(fmt.Sprintf("Deleted job: %s", jobID)))
 }
 
 func (jp *JobsPortal) listJobs(w http.ResponseWriter, r *http.Request) {
@@ -76,8 +76,8 @@ func (jp *JobsPortal) listJobs(w http.ResponseWriter, r *http.Request) {
 	function := chi.URLParam(r, "function")
 	list := []render.Renderer{}
 
-	jobList, err := jp.managerContext.SubmitReq(&jobs.RequestMessage{ Name:"",
-		Namespace:namespace, Function:function, Type:jobs.RequestTypeJobList})
+	jobList, err := jp.managerContext.SubmitReq(&jobs.RequestMessage{Name: "",
+		Namespace: namespace, Function: function, Type: jobs.RequestTypeJobList})
 
 	if err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
@@ -88,7 +88,7 @@ func (jp *JobsPortal) listJobs(w http.ResponseWriter, r *http.Request) {
 		list = append(list, j)
 	}
 
-	if err := render.RenderList(w, r, list ); err != nil {
+	if err := render.RenderList(w, r, list); err != nil {
 		render.Render(w, r, ErrRender(err))
 		return
 	}
@@ -102,7 +102,7 @@ func (jp *JobsPortal) createJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_, err := jp.managerContext.SubmitReq(&jobs.RequestMessage{
-		Object:data.Job, Type:jobs.RequestTypeJobCreate})
+		Object: &data.Job, Type: jobs.RequestTypeJobCreate})
 
 	if err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
@@ -126,16 +126,15 @@ func (jp *JobsPortal) updateJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	job, err := jp.managerContext.SubmitReq(&jobs.RequestMessage{
-		Name:jobID, Namespace:namespace, Function:function, Object:data.Job, Type:jobs.RequestTypeJobUpdate})
+		Name: jobID, Namespace: namespace, Function: function, Object: data.Job, Type: jobs.RequestTypeJobUpdate})
 
 	if err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
 		return
 	}
 
-	if err := render.Render(w, r, &jobs.JobMessage{Job:job.(jobs.Job)}); err != nil {
+	if err := render.Render(w, r, &jobs.JobMessage{Job: job.(jobs.Job)}); err != nil {
 		render.Render(w, r, ErrRender(err))
 		return
 	}
 }
-

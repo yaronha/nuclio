@@ -239,8 +239,6 @@ func (d *Deployment) addTasks2Proc(proc *Process, toAdd, totalTasks int) (int, e
 	jobList := []jobRec{}
 	added := 0
 
-	// TODO: Handle batch allocations (with MaxAllocation of tasks per process/job)
-
 	// First pass, give each job more tasks based on its share
 	for _, j := range d.jobs {
 		rec := jobRec{job: j}
@@ -307,9 +305,11 @@ func (d *Deployment) updateJobs() error {
 			// if this deployment doesnt contain the Job, create and add one
 			newJob := &Job{Name: rjob.Name, Namespace: d.Namespace,
 				Function: d.Function, Version: d.Version,
-				TotalTasks: rjob.TotalTasks, MaxTaskAllocation: rjob.MaxTaskAllocation,
+				TotalTasks: rjob.TotalTasks, MaxTaskAllocation: rjob.MaxTaskAllocation, Metadata: rjob.Metadata,
 			}
 			job, err := NewJob(d.dm.ctx, newJob)
+			job.NeedToSave()
+
 			if err != nil {
 				d.dm.logger.ErrorWith("Failed to create a job", "deploy", d.Name, "job", rjob.Name, "err", err)
 			}
@@ -320,42 +320,80 @@ func (d *Deployment) updateJobs() error {
 
 	}
 
-	// go over processes in this deployment and give them tasks (note proc list may still be empty at this point)
-	for _, proc := range d.procs {
-		err := d.AllocateTasks(proc)
-		if err != nil {
-			d.dm.logger.ErrorWith("Failed to allocate jobtasks to proc", "deploy", d.Name, "proc", proc.Name, "err", err)
-		}
+	d.dm.ctx.SaveJobs(d.jobs)
+
+	// balance tasks across processes (note proc list may still be empty at this point)
+	err := d.Rebalance()
+	if err != nil {
+		d.dm.logger.ErrorWith("Failed to rebalance in updateJobs", "deploy", d.Name, "err", err)
+		return err
 	}
+
+	// TODO: remove, just for ref
+	//for _, proc := range d.procs {
+	//	err := d.AllocateTasks(proc)
+	//	if err != nil {
+	//		d.dm.logger.ErrorWith("Failed to allocate jobtasks to proc", "deploy", d.Name, "proc", proc.Name, "err", err)
+	//	}
+	//}
 
 	d.dm.logger.DebugWith("updateDeployJobs", "jobs", d.jobs)
 	return nil
 }
 
-// TODO: unused, add job while the deployment is working
-func (d *Deployment) AddJob(job *Job) error {
+// add job while the deployment is working
+func (d *Deployment) AddJob(rjob *Job) error {
 
-	//TODO: allocation w rebalance logic
+	_, ok := d.jobs[rjob.Name]
+	if !ok {
+		// if this deployment doesnt contain the Job, create and add one
+		newJob := &Job{Name: rjob.Name, Namespace: d.Namespace,
+			Function: d.Function, Version: d.Version,
+			TotalTasks: rjob.TotalTasks, MaxTaskAllocation: rjob.MaxTaskAllocation, Metadata: rjob.Metadata,
+		}
+		job, err := NewJob(d.dm.ctx, newJob)
+		job.postDeployment = true
+		job.NeedToSave()
+		if err != nil {
+			d.dm.logger.ErrorWith("Failed to create a job", "deploy", d.Name, "job", rjob.Name, "err", err)
+		}
+
+		d.jobs[rjob.Name] = job
+		d.dm.ctx.SaveJobs(d.jobs)
+
+		d.dm.logger.DebugWith("Added new job to function", "function", d.Name, "job", rjob.Name, "tasks", rjob.TotalTasks)
+		err = d.Rebalance()
+		if err != nil {
+			d.dm.logger.ErrorWith("Failed to rebalance after AddJob", "deploy", d.Name, "job", rjob.Name, "err", err)
+			return err
+		}
+	} else {
+		d.dm.logger.WarnWith("Add job to function - Job already exist", "function", d.Name, "job", rjob.Name)
+		return nil
+	}
 
 	return nil
 }
 
-// TODO: unused, remove job while the deployment is working
+// remove job while the deployment is working
 func (d *Deployment) RemoveJob(job *Job, force bool) error {
 
-	job.Stop(force)
+	job.Stop(d.procs)
 
 	delete(d.jobs, job.Name)
 	return nil
 }
 
-// TODO: clear all deployment resources before a delete
+// clear all deployment resources before a delete
 func (d *Deployment) ClearDeployment() error {
 
 	// delete links from proc to jobs and deployments
 	for _, proc := range d.procs {
 		proc.ClearAll()
 	}
+
+	// Delete Jobs from persistent stor
+	d.dm.ctx.DeleteJobRecords(d.jobs)
 
 	return nil
 }

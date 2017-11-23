@@ -156,6 +156,23 @@ func (p *Process) ClearTasks() error {
 	return nil
 }
 
+// Request to stop all process tasks
+func (p *Process) ClearJobTasks(job string) error {
+	j, ok := p.jobs[job]
+	if ok {
+		for _, task := range j.tasks {
+			task.State = TaskStateStopping
+		}
+
+		if len(j.tasks) > 0 {
+			p.removingTasks = true
+			return p.PushUpdates()
+		}
+	}
+
+	return nil
+}
+
 // return list of tasks assigned to this proc
 func (p *Process) GetTasks(active bool) []*Task {
 	list := []*Task{}
@@ -413,10 +430,12 @@ func (p *Process) GetProcessState() *ProcessMessage {
 	return &msg
 }
 
-// emulate a process locally, unused, may be broken
+// emulate a process locally, may be broken
 func (p *Process) emulateProcess() {
 
 	msg := ProcessMessage{BaseProcess: p.BaseProcess}
+	msg.Jobs = map[string]JobShort{}
+
 	for jobName, job := range p.jobs {
 		taskList := []TaskMessage{}
 		for _, task := range job.tasks {

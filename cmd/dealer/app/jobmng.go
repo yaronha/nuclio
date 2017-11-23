@@ -50,12 +50,13 @@ func NewJobManager(config string, logger nuclio.Logger) (*JobManager, error) {
 	newManager.Ctx.RequestsChannel = reqChan2
 	newManager.DeployMap, _ = jobs.NewDeploymentMap(logger, newManager.Ctx)
 
-	newManager.logger = logger
+	newManager.Ctx.Logger = logger
+
 	return &newManager, nil
 }
 
 type JobManager struct {
-	logger          nuclio.Logger
+	//logger          nuclio.Logger
 	Ctx             *jobs.ManagerContext
 	RequestsChannel chan *jobs.RequestMessage
 	verbose         bool
@@ -91,10 +92,10 @@ func (jm *JobManager) Start() error {
 				if !ok {
 					break
 				}
-				jm.logger.DebugWith("Got proc response", "body", string(resp.Body()))
+				jm.Ctx.Logger.DebugWith("Got proc response", "body", string(resp.Body()))
 
 			case req := <-jm.Ctx.RequestsChannel:
-				//jm.logger.DebugWith("Got chan request", "type", req.Type, "name", req.Name, "namespace", req.Namespace)
+				//jm.Ctx.Logger.DebugWith("Got chan request", "type", req.Type, "name", req.Name, "namespace", req.Namespace)
 				switch req.Type {
 				case jobs.RequestTypeJobGet:
 					job, err := jm.getJob(req.Namespace, req.Function, req.Name)
@@ -238,7 +239,7 @@ func (jm *JobManager) listJobs(namespace, function, version string) []*jobs.JobM
 // TODO: add job before/after deployment was created
 func (jm *JobManager) addJob(job *jobs.Job) (*jobs.JobMessage, error) {
 
-	jm.logger.InfoWith("Adding new job", "job", job)
+	jm.Ctx.Logger.InfoWith("Adding new job", "job", job)
 	dep := jm.DeployMap.FindDeployment(job.Namespace, job.Function, job.Version, true)
 	if dep == nil {
 		return nil, fmt.Errorf("Deployment %s %s %s not found, cannot add a job", job.Namespace, job.Function, job.Version)
@@ -260,7 +261,7 @@ func (jm *JobManager) addJob(job *jobs.Job) (*jobs.JobMessage, error) {
 // TODO: change to dep jobs
 func (jm *JobManager) removeJob(name, namespace string) error {
 
-	jm.logger.InfoWith("Removing a job", "name", name, "namespace", namespace)
+	jm.Ctx.Logger.InfoWith("Removing a job", "name", name, "namespace", namespace)
 
 	return nil
 }
@@ -270,19 +271,19 @@ func (jm *JobManager) updateJob(oldJob, newjob *jobs.JobMessage) error {
 
 	// TODO: consider what need to allow in update and habdle it (currently ignored)
 	// e.g. update MaxAllocation, Job to Version assosiation, Metadata, TotalTasks
-	jm.logger.InfoWith("Update a job", "old", oldJob, "new", newjob)
+	jm.Ctx.Logger.InfoWith("Update a job", "old", oldJob, "new", newjob)
 
 	return nil
 }
 
 func (jm *JobManager) removeProcess(name, namespace string) error {
 
-	jm.logger.DebugWith("Removing a process", "name", name, "namespace", namespace)
+	jm.Ctx.Logger.DebugWith("Removing a process", "name", name, "namespace", namespace)
 	key := jobs.ProcessKey(name, namespace)
 
 	proc, ok := jm.Processes[key]
 	if !ok {
-		jm.logger.ErrorWith("Process not found in removeProcess", "name", name, "namespace", namespace)
+		jm.Ctx.Logger.ErrorWith("Process not found in removeProcess", "name", name, "namespace", namespace)
 		return fmt.Errorf("Process %s not found", name)
 	}
 
@@ -300,11 +301,11 @@ func (jm *JobManager) removeProcess(name, namespace string) error {
 
 func (jm *JobManager) processHealth(name, namespace string) error {
 
-	jm.logger.DebugWith("Got heart beat form process", "name", name, "namespace", namespace)
+	jm.Ctx.Logger.DebugWith("Got heart beat form process", "name", name, "namespace", namespace)
 	key := jobs.ProcessKey(name, namespace)
 	proc, ok := jm.Processes[key]
 	if !ok {
-		jm.logger.ErrorWith("Process not found in processHealth", "name", name, "namespace", namespace)
+		jm.Ctx.Logger.ErrorWith("Process not found in processHealth", "name", name, "namespace", namespace)
 		return fmt.Errorf("Process %s not found", name)
 	}
 
@@ -320,22 +321,22 @@ func (jm *JobManager) updateProcess(procMsg *jobs.ProcessMessage, checkTasks boo
 	if !ok {
 
 		if procMsg.State != jobs.ProcessStateReady {
-			jm.logger.DebugWith("process update, new and state is not ready", "process", procMsg)
+			jm.Ctx.Logger.DebugWith("process update, new and state is not ready", "process", procMsg)
 			return procMsg, nil
 		}
 
-		jm.logger.InfoWith("Adding new process", "process", procMsg)
+		jm.Ctx.Logger.InfoWith("Adding new process", "process", procMsg)
 
 		dep := jm.DeployMap.FindDeployment(procMsg.Namespace, procMsg.Function, procMsg.Version, false)
 		if dep == nil {
 			// TODO: may have a case where the deployment update is delayed, and need to init a dummy deploy
-			jm.logger.ErrorWith("Deployment wasnt found in process update",
+			jm.Ctx.Logger.ErrorWith("Deployment wasnt found in process update",
 				"namespace", procMsg.Namespace, "function", procMsg.Function, "version", procMsg.Version)
 			return nil, fmt.Errorf("Failed to add process, deployment %s %s %s not found", procMsg.Namespace, procMsg.Function, procMsg.Version)
 		}
 
 		var err error
-		proc, err = jobs.NewProcess(jm.logger, jm.Ctx, procMsg)
+		proc, err = jobs.NewProcess(jm.Ctx.Logger, jm.Ctx, procMsg)
 		if err != nil {
 			return nil, err
 		}
@@ -346,13 +347,13 @@ func (jm *JobManager) updateProcess(procMsg *jobs.ProcessMessage, checkTasks boo
 		if dep.ExpectedProc >= len(dep.GetProcs()) && procMsg.State == jobs.ProcessStateReady {
 			err := dep.AllocateTasks(proc)
 			if err != nil {
-				jm.logger.ErrorWith("Failed to allocate jobtasks to proc", "deploy", dep.Name, "proc", proc.Name, "err", err)
+				jm.Ctx.Logger.ErrorWith("Failed to allocate jobtasks to proc", "deploy", dep.Name, "proc", proc.Name, "err", err)
 			}
 			return proc.GetProcessState(), nil
 		}
 	}
 
-	jm.logger.InfoWith("Update a process", "old", proc, "new", procMsg)
+	jm.Ctx.Logger.InfoWith("Update a process", "old", proc, "new", procMsg)
 	proc.LastUpdate = time.Now()
 	// TODO: handle state transitions
 

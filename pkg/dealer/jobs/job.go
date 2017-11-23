@@ -48,7 +48,8 @@ type Job struct {
 	// Private Job Metadata, will be passed to the processor as is
 	Metadata interface{} `json:"metadata,omitempty"`
 
-	tasks []*Task
+	tasks      []*Task
+	isStopping bool
 }
 
 // Job request and response for the REST API
@@ -125,9 +126,15 @@ func (j *Job) NeedToSave() bool {
 	return val
 }
 
-func (j *Job) Stop(force bool) error {
+func (j *Job) Stop(procs map[string]*Process) error {
 
-	// TODO: stop all tasks (in multiple processes)
+	j.isStopping = true
+
+	for _, proc := range procs {
+		// TODO: report err to logger, need to add context
+		err := proc.ClearJobTasks(j.Name)
+		j.ctx.Logger.ErrorWith("Error when stopping Job - cant clear tasks", "Job", j.Name, "process", proc.Name, "error", err)
+	}
 
 	return nil
 }
