@@ -17,59 +17,82 @@ limitations under the License.
 package app
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
-
-	"github.com/nuclio/nuclio-sdk"
-	"github.com/nuclio/nuclio/pkg/processor/eventsource"
-	_ "github.com/nuclio/nuclio/pkg/processor/eventsource/generator"
-	_ "github.com/nuclio/nuclio/pkg/processor/eventsource/http"
-	_ "github.com/nuclio/nuclio/pkg/processor/eventsource/poller/v3ioitempoller"
-	_ "github.com/nuclio/nuclio/pkg/processor/eventsource/rabbitmq"
+	"github.com/nuclio/nuclio/pkg/errors"
+	// load all runtimes
 	_ "github.com/nuclio/nuclio/pkg/processor/runtime/golang"
+	_ "github.com/nuclio/nuclio/pkg/processor/runtime/python"
 	_ "github.com/nuclio/nuclio/pkg/processor/runtime/shell"
+	"github.com/nuclio/nuclio/pkg/processor/statistics"
+	"github.com/nuclio/nuclio/pkg/processor/trigger"
+	// load all triggers
+	_ "github.com/nuclio/nuclio/pkg/processor/trigger/generator"
+	_ "github.com/nuclio/nuclio/pkg/processor/trigger/http"
+	_ "github.com/nuclio/nuclio/pkg/processor/trigger/kafka"
+	_ "github.com/nuclio/nuclio/pkg/processor/trigger/kinesis"
+	_ "github.com/nuclio/nuclio/pkg/processor/trigger/nats"
+	_ "github.com/nuclio/nuclio/pkg/processor/trigger/poller/v3ioitempoller"
+	_ "github.com/nuclio/nuclio/pkg/processor/trigger/rabbitmq"
+	"github.com/nuclio/nuclio/pkg/processor/webadmin"
 	"github.com/nuclio/nuclio/pkg/processor/worker"
 	"github.com/nuclio/nuclio/pkg/zap"
 
-	"github.com/pkg/errors"
+	"github.com/nuclio/nuclio-sdk"
 	"github.com/spf13/viper"
 )
 
+// Processor is responsible to process events
 type Processor struct {
-	logger        nuclio.Logger
-	configuration map[string]*viper.Viper
-	workers       []worker.Worker
-	eventSources  []eventsource.EventSource
+	logger         nuclio.Logger
+	functionLogger nuclio.Logger
+	configuration  *viper.Viper
+	workers        []worker.Worker
+	eventSources   []trigger.Trigger
+	webAdminServer *webadmin.Server
+	metricsPusher  *statistics.MetricPusher
 }
 
+// NewProcessor returns a new Processor
 func NewProcessor(configurationPath string) (*Processor, error) {
 	var err error
 
-	newProcessor := Processor{
-		configuration: map[string]*viper.Viper{},
-	}
-
-	// try to read configuration
-	if err := newProcessor.readConfiguration(configurationPath); err != nil {
+	newProcessor := &Processor{}
+	newProcessor.configuration, err = newProcessor.readConfiguration(configurationPath)
+	if err != nil {
 		return nil, err
 	}
 
-	// initialize a logger
-	newProcessor.logger, err = newProcessor.createLogger(newProcessor.configuration["logger"])
+	// create loggers for both the processor and the function invoked by the processor - they may
+	// be headed to two different places
+	newProcessor.logger,
+		newProcessor.functionLogger,
+		err = newProcessor.createLoggers(newProcessor.getSubConfiguration("logger"))
+
 	if err != nil {
 		return nil, errors.New("Failed to create logger")
 	}
 
 	// create event sources
-	newProcessor.eventSources, err = newProcessor.createEventSources()
+	newProcessor.eventSources, err = newProcessor.createTriggers()
 	if err != nil {
-		return nil, errors.Wrapf(err, "Failed to create event sources")
+		return nil, errors.Wrap(err, "Failed to create event sources")
 	}
 
-	return &newProcessor, nil
+	// create the web interface
+	newProcessor.webAdminServer, err = newProcessor.createWebAdminServer()
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to create web interface server")
+	}
+
+	// create metric pusher
+	newProcessor.metricsPusher, err = newProcessor.createMetricPusher()
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to create metric pusher")
+	}
+
+	return newProcessor, nil
 }
 
+// Start starts the processor
 func (p *Processor) Start() error {
 
 	// iterate over all event sources and start them
@@ -77,63 +100,56 @@ func (p *Processor) Start() error {
 		eventSource.Start(nil)
 	}
 
+	// start the web interface
+	err := p.webAdminServer.Start()
+	if err != nil {
+		return errors.Wrap(err, "Failed to start web interface")
+	}
+
+	// start pushing metrics
+	err = p.metricsPusher.Start()
+	if err != nil {
+		return errors.Wrap(err, "Failed to start metric pushing")
+	}
+
 	// TODO: shutdown
 	select {}
 }
 
-func (p *Processor) readConfiguration(configurationPath string) error {
+// get event sources
+func (p *Processor) GetTriggers() []trigger.Trigger {
+	return p.eventSources
+}
+
+func (p *Processor) readConfiguration(configurationPath string) (*viper.Viper, error) {
 
 	// if no configuration file passed use defaults all around
 	if configurationPath == "" {
-		return nil
+		return nil, nil
 	}
 
 	// read root configuration
-	p.configuration["root"] = viper.New()
-	p.configuration["root"].SetConfigFile(configurationPath)
+	configuration := viper.New()
+	configuration.SetConfigFile(configurationPath)
 
 	// read the root configuration file
-	if err := p.configuration["root"].ReadInConfig(); err != nil {
-		return err
+	if err := configuration.ReadInConfig(); err != nil {
+		return nil, err
 	}
 
-	// get the directory of the root configuration file, we'll need it since all section
-	// configuration files are relative to that
-	rootConfigurationDir := filepath.Dir(configurationPath)
-
-	// read the configuration file sections, which may be in separate configuration files or inline
-	for _, sectionName := range []string{"event_sources", "function", "web_admin", "logger"} {
-
-		// try to get <section name>.config_path (e.g. function.config_path)
-		sectionConfigPath := p.configuration["root"].GetString(fmt.Sprintf("%s.config_path", sectionName))
-
-		// if it exists, create a viper and read it
-		if sectionConfigPath != "" {
-			p.configuration[sectionName] = viper.New()
-			p.configuration[sectionName].SetConfigFile(filepath.Join(rootConfigurationDir, sectionConfigPath))
-
-			// do the read
-			if err := p.configuration[sectionName].ReadInConfig(); err != nil {
-				return err
-			}
-		} else {
-
-			// the section is a sub of the root
-			p.configuration[sectionName] = p.configuration["root"].Sub(sectionName)
-		}
-	}
-
-	return nil
+	return configuration, nil
 }
 
-func (p *Processor) createLogger(configuration *viper.Viper) (nuclio.Logger, error) {
+// returns the processor logger and the function logger. For now, they are one of the same
+func (p *Processor) createLoggers(configuration *viper.Viper) (nuclio.Logger, nuclio.Logger, error) {
+	newLogger, err := nucliozap.NewNuclioZapCmd("processor", nucliozap.DebugLevel)
 
-	// TODO: configuration stuff
-	return nucliozap.NewNuclioZap("processor", nucliozap.DebugLevel)
+	// TODO: create the loggers from configuration
+	return newLogger, newLogger, err
 }
 
-func (p *Processor) createEventSources() ([]eventsource.EventSource, error) {
-	eventSources := []eventsource.EventSource{}
+func (p *Processor) createTriggers() ([]trigger.Trigger, error) {
+	eventSources := []trigger.Trigger{}
 	eventSourceConfigurations := make(map[string]interface{})
 
 	// get the runtime configuration
@@ -144,19 +160,20 @@ func (p *Processor) createEventSources() ([]eventsource.EventSource, error) {
 
 	// get configuration (root of event sources) if event sources exists in configuration. if it doesn't
 	// just skip and default event sources will be created
-	eventSourceConfigurationsViper := p.configuration["event_sources"]
+	eventSourceConfigurationsViper := p.getSubConfiguration("triggers")
 	if eventSourceConfigurationsViper != nil {
 		eventSourceConfigurations = eventSourceConfigurationsViper.GetStringMap("")
 	}
 
 	for eventSourceID := range eventSourceConfigurations {
-		eventSourceConfiguration := p.configuration["event_sources"].Sub(eventSourceID)
+		var eventSource trigger.Trigger
+		eventSourceConfiguration := p.getSubConfiguration("triggers").Sub(eventSourceID)
 
 		// set the ID of the event source
 		eventSourceConfiguration.Set("id", eventSourceID)
 
 		// create an event source based on event source configuration and runtime configuration
-		eventSource, err := eventsource.RegistrySingleton.NewEventSource(p.logger,
+		eventSource, err = trigger.RegistrySingleton.NewTrigger(p.logger,
 			eventSourceConfiguration.GetString("kind"),
 			eventSourceConfiguration,
 			runtimeConfiguration)
@@ -172,37 +189,37 @@ func (p *Processor) createEventSources() ([]eventsource.EventSource, error) {
 	}
 
 	// create default event source, given the event sources already created by configuration
-	defaultEventSources, err := p.createDefaultEventSources(eventSources, runtimeConfiguration)
+	defaultTriggers, err := p.createDefaultTriggers(eventSources, runtimeConfiguration)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to create default event sources")
 	}
 
 	// augment with default event sources, if any were created
-	eventSources = append(eventSources, defaultEventSources...)
+	eventSources = append(eventSources, defaultTriggers...)
 
 	return eventSources, nil
 }
 
-func (p *Processor) createDefaultEventSources(existingEventSources []eventsource.EventSource,
-	runtimeConfiguration *viper.Viper) ([]eventsource.EventSource, error) {
-	createdEventSources := []eventsource.EventSource{}
+func (p *Processor) createDefaultTriggers(existingTriggers []trigger.Trigger,
+	runtimeConfiguration *viper.Viper) ([]trigger.Trigger, error) {
+	createdTriggers := []trigger.Trigger{}
 
 	// if there's already an http event source in the list of existing, do nothing
-	if p.hasHTTPEventSource(existingEventSources) {
-		return createdEventSources, nil
+	if p.hasHTTPTrigger(existingTriggers) {
+		return createdTriggers, nil
 	}
 
-	httpEventSource, err := p.createDefaultHttpEventSource(runtimeConfiguration)
+	httpTrigger, err := p.createDefaultHTTPTrigger(runtimeConfiguration)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to create default HTTP event source")
 	}
 
-	return append(createdEventSources, httpEventSource), nil
+	return append(createdTriggers, httpTrigger), nil
 }
 
-func (p *Processor) hasHTTPEventSource(eventSources []eventsource.EventSource) bool {
-	for _, existingEventSource := range eventSources {
-		if existingEventSource.GetKind() == "http" {
+func (p *Processor) hasHTTPTrigger(eventSources []trigger.Trigger) bool {
+	for _, existingTrigger := range eventSources {
+		if existingTrigger.GetKind() == "http" {
 			return true
 		}
 	}
@@ -210,7 +227,7 @@ func (p *Processor) hasHTTPEventSource(eventSources []eventsource.EventSource) b
 	return false
 }
 
-func (p *Processor) createDefaultHttpEventSource(runtimeConfiguration *viper.Viper) (eventsource.EventSource, error) {
+func (p *Processor) createDefaultHTTPTrigger(runtimeConfiguration *viper.Viper) (trigger.Trigger, error) {
 	listenAddress := ":8080"
 
 	p.logger.DebugWith("Creating default HTTP event source",
@@ -219,31 +236,46 @@ func (p *Processor) createDefaultHttpEventSource(runtimeConfiguration *viper.Vip
 
 	// populate default HTTP configuration
 	httpConfiguration := viper.New()
+	httpConfiguration.Set("ID", "default_http")
 	httpConfiguration.Set("num_workers", 1)
 	httpConfiguration.Set("listen_address", listenAddress)
 
-	return eventsource.RegistrySingleton.NewEventSource(p.logger,
+	return trigger.RegistrySingleton.NewTrigger(p.logger,
 		"http",
 		httpConfiguration,
 		runtimeConfiguration)
 }
 
 func (p *Processor) getRuntimeConfiguration() (*viper.Viper, error) {
-	runtimeConfiguration := p.configuration["function"]
+	runtimeConfiguration := p.getSubConfiguration("function")
 
-	// get function name
-	if runtimeConfiguration == nil {
+	// set the function logger as a configuration, to be read by the runtimes
+	runtimeConfiguration.Set("function_logger", p.functionLogger)
 
-		// initialize with a new viper
-		runtimeConfiguration = viper.New()
-
-		// try to read env var. if env doesn't exist, the function selection logic will
-		// just choose the first registered function
-		runtimeConfiguration.SetDefault("name", os.Getenv("NUCLIO_FUNCTION_NAME"))
-	}
-
-	// by default use golang
-	runtimeConfiguration.SetDefault("kind", "golang")
+	// set the data binding configuration
+	runtimeConfiguration.Set("dataBindings", p.getSubConfiguration("dataBindings"))
 
 	return runtimeConfiguration, nil
+}
+
+func (p *Processor) createWebAdminServer() (*webadmin.Server, error) {
+
+	// create the server
+	return webadmin.NewServer(p.logger, p, p.getSubConfiguration("web_admin"))
+}
+
+func (p *Processor) createMetricPusher() (*statistics.MetricPusher, error) {
+
+	// create the pusher
+	return statistics.NewMetricPusher(p.logger, p, p.getSubConfiguration("metrics"))
+}
+
+func (p *Processor) getSubConfiguration(key string) *viper.Viper {
+
+	if subViper := p.configuration.Sub(key); subViper != nil {
+		return subViper
+	}
+
+	// return an empty viper
+	return viper.New()
 }

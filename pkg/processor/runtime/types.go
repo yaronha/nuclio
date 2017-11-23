@@ -17,90 +17,69 @@ limitations under the License.
 package runtime
 
 import (
-	"github.com/nuclio/nuclio/pkg/functioncr"
-
-	"github.com/pkg/errors"
+	"github.com/nuclio/nuclio-sdk"
 	"github.com/spf13/viper"
-	"os"
-	"strings"
 )
 
+type Statistics struct {
+	DurationMilliSecondsSum   uint64
+	DurationMilliSecondsCount uint64
+}
+
+func (s *Statistics) DiffFrom(prev *Statistics) Statistics {
+	return Statistics{
+		DurationMilliSecondsSum:   s.DurationMilliSecondsSum - prev.DurationMilliSecondsSum,
+		DurationMilliSecondsCount: s.DurationMilliSecondsCount - prev.DurationMilliSecondsCount,
+	}
+}
+
+// Copied from functioncr to prevent dependencies on functioncr
+type DataBinding struct {
+	Name    string            `json:"name"`
+	Class   string            `json:"class"`
+	URL     string            `json:"url"`
+	Path    string            `json:"path,omitempty"`
+	Query   string            `json:"query,omitempty"`
+	Secret  string            `json:"secret,omitempty"`
+	Options map[string]string `json:"options,omitempty"`
+}
+
 type Configuration struct {
-	Name         string
-	Version      string
-	Description  string
-	DataBindings map[string]*functioncr.DataBinding
+	Name           string
+	Version        string
+	Description    string
+	DataBindings   map[string]*DataBinding
+	FunctionLogger nuclio.Logger
+	Handler        string
 }
 
 func NewConfiguration(configuration *viper.Viper) (*Configuration, error) {
 
 	newConfiguration := &Configuration{
-		Name:         configuration.GetString("name"),
-		Description:  configuration.GetString("description"),
-		Version:      configuration.GetString("version"),
-		DataBindings: map[string]*functioncr.DataBinding{},
+		Name:           configuration.GetString("name"),
+		Description:    configuration.GetString("description"),
+		Version:        configuration.GetString("version"),
+		DataBindings:   map[string]*DataBinding{},
+		FunctionLogger: configuration.Get("function_logger").(nuclio.Logger),
+		Handler:        configuration.GetString("handler"),
 	}
 
-	// get databindings by environment variables
-	err := newConfiguration.getDataBindingsFromEnv(os.Environ(), newConfiguration.DataBindings)
+	// get databindings, as injected by processor
+	dataBindingsConfigurationsViper := configuration.Get("dataBindings").(*viper.Viper)
+	dataBindingsConfigurations := dataBindingsConfigurationsViper.GetStringMap("")
 
-	if err != nil {
-		return nil, errors.Wrap(err, "Failed to read data bindings from environment")
+	for dataBindingID := range dataBindingsConfigurations {
+		var dataBinding DataBinding
+		dataBindingsConfiguration := dataBindingsConfigurationsViper.Sub(dataBindingID)
+
+		// set the ID of the trigger
+		dataBinding.Name = dataBindingID
+		dataBinding.Class = dataBindingsConfiguration.GetString("class")
+		dataBinding.URL = dataBindingsConfiguration.GetString("url")
+		dataBinding.Secret = dataBindingsConfiguration.GetString("secret")
+
+		newConfiguration.DataBindings[dataBindingID] = &dataBinding
 	}
 
 	return newConfiguration, nil
-}
-
-func (c *Configuration) getDataBindingsFromEnv(envs []string, dataBindings map[string]*functioncr.DataBinding) error {
-	dataBindingPrefix := "NUCLIO_DATA_BINDING_"
-
-	// iterate over env
-	for _, env := range envs {
-		envKeyValue := strings.Split(env, "=")
-		envKey := envKeyValue[0]
-		envValue := envKeyValue[1]
-
-		// check if it starts with data binding prefix. if it doesn't do nothing
-		if !strings.HasPrefix(envKey, dataBindingPrefix) {
-			continue
-		}
-
-		// strip the prefix
-		envKey = envKey[len(dataBindingPrefix):]
-
-		// look for the known postfixes
-		for _, postfix := range []string{
-			"CLASS",
-			"URL",
-		} {
-
-			// skip if it's not the postfix we're looking for
-			if !strings.HasSuffix(envKey, postfix) {
-				continue
-			}
-
-			// get the data binding name
-			dataBindingName := envKey[:len(envKey)-len(postfix)-1]
-
-			var dataBinding *functioncr.DataBinding
-
-			// get or create/insert the data binding
-			dataBinding, ok := dataBindings[dataBindingName]
-			if !ok {
-
-				// create a new one and shove to map
-				dataBinding = &functioncr.DataBinding{}
-				dataBindings[dataBindingName] = dataBinding
-			}
-
-			switch postfix {
-			case "CLASS":
-				dataBinding.Class = envValue
-			case "URL":
-				dataBinding.Url = envValue
-			}
-		}
-	}
-
-	return nil
 }

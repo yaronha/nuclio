@@ -17,16 +17,16 @@ limitations under the License.
 package command
 
 import (
-	"github.com/nuclio/nuclio/pkg/nuctl/deleter"
+	"github.com/nuclio/nuclio/pkg/errors"
+	"github.com/nuclio/nuclio/pkg/functionconfig"
+	"github.com/nuclio/nuclio/pkg/platform"
 
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
 type deleteCommandeer struct {
 	cmd            *cobra.Command
 	rootCommandeer *RootCommandeer
-	deleteOptions  deleter.Options
 }
 
 func newDeleteCommandeer(rootCommandeer *RootCommandeer) *deleteCommandeer {
@@ -51,11 +51,13 @@ func newDeleteCommandeer(rootCommandeer *RootCommandeer) *deleteCommandeer {
 
 type deleteFunctionCommandeer struct {
 	*deleteCommandeer
+	functionConfig functionconfig.Config
 }
 
 func newDeleteFunctionCommandeer(deleteCommandeer *deleteCommandeer) *deleteFunctionCommandeer {
 	commandeer := &deleteFunctionCommandeer{
 		deleteCommandeer: deleteCommandeer,
+		functionConfig:   *functionconfig.NewConfig(),
 	}
 
 	cmd := &cobra.Command{
@@ -69,23 +71,17 @@ func newDeleteFunctionCommandeer(deleteCommandeer *deleteCommandeer) *deleteFunc
 				return errors.New("Function delete requires identifier")
 			}
 
-			// set common
-			commandeer.deleteOptions.Common = &deleteCommandeer.rootCommandeer.commonOptions
-			commandeer.deleteOptions.Common.Identifier = args[0]
+			commandeer.functionConfig.Meta.Name = args[0]
+			commandeer.functionConfig.Meta.Namespace = deleteCommandeer.rootCommandeer.namespace
 
-			// create logger
-			logger, err := deleteCommandeer.rootCommandeer.createLogger()
-			if err != nil {
-				return errors.Wrap(err, "Failed to create logger")
+			// initialize root
+			if err := deleteCommandeer.rootCommandeer.initialize(); err != nil {
+				return errors.Wrap(err, "Failed to initialize root")
 			}
 
-			// create function deleter and execute
-			functionDeleter, err := deleter.NewFunctionDeleter(logger, &commandeer.deleteOptions)
-			if err != nil {
-				return errors.Wrap(err, "Failed to create function deleter")
-			}
-
-			return functionDeleter.Execute()
+			return deleteCommandeer.rootCommandeer.platform.DeleteFunction(&platform.DeleteOptions{
+				FunctionConfig: commandeer.functionConfig,
+			})
 		},
 	}
 

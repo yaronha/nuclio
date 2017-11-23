@@ -19,6 +19,8 @@ package worker
 import (
 	"testing"
 
+	"github.com/nuclio/nuclio/pkg/processor"
+	"github.com/nuclio/nuclio/pkg/processor/runtime"
 	"github.com/nuclio/nuclio/pkg/zap"
 
 	"github.com/nuclio/nuclio-sdk"
@@ -30,9 +32,17 @@ type MockRuntime struct {
 	mock.Mock
 }
 
-func (mr *MockRuntime) ProcessEvent(event nuclio.Event) (interface{}, error) {
-	args := mr.Called(event)
+func (mr *MockRuntime) ProcessEvent(event nuclio.Event, functionLogger nuclio.Logger) (interface{}, error) {
+	args := mr.Called(event, functionLogger)
 	return args.Get(0), args.Error(1)
+}
+
+func (mr *MockRuntime) GetFunctionLogger() nuclio.Logger {
+	return nil
+}
+
+func (mr *MockRuntime) GetStatistics() *runtime.Statistics {
+	return nil
 }
 
 type WorkerTestSuite struct {
@@ -41,19 +51,19 @@ type WorkerTestSuite struct {
 }
 
 func (suite *WorkerTestSuite) SetupSuite() {
-	suite.logger, _ = nucliozap.NewNuclioZap("test", nucliozap.DebugLevel)
+	suite.logger, _ = nucliozap.NewNuclioZapTest("test")
 }
 
 func (suite *WorkerTestSuite) TestProcessEvent() {
 	mockRuntime := MockRuntime{}
-	worker := NewWorker(suite.logger, 100, &mockRuntime)
-	event := &nuclio.AbstractEvent{}
+	worker, _ := NewWorker(suite.logger, 100, &mockRuntime)
+	event := &processor.AbstractEvent{}
 
 	// expect the mock process event to be called with the event
-	mockRuntime.On("ProcessEvent", event).Return(nil, nil).Once()
+	mockRuntime.On("ProcessEvent", event, suite.logger).Return(nil, nil).Once()
 
 	// process the event
-	worker.ProcessEvent(event)
+	worker.ProcessEvent(event, suite.logger)
 
 	// make sure all expectations are met
 	mockRuntime.AssertExpectations(suite.T())

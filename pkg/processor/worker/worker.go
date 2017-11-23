@@ -17,40 +17,70 @@ limitations under the License.
 package worker
 
 import (
-	"github.com/nuclio/nuclio-sdk"
 	"github.com/nuclio/nuclio/pkg/processor/runtime"
+
+	"github.com/nuclio/nuclio-sdk"
 )
 
 type Worker struct {
-	logger  nuclio.Logger
-	context nuclio.Context
-	index   int
-	runtime runtime.Runtime
+	logger     nuclio.Logger
+	context    nuclio.Context
+	index      int
+	runtime    runtime.Runtime
+	statistics Statistics
 }
 
 func NewWorker(parentLogger nuclio.Logger,
 	index int,
-	runtime runtime.Runtime) *Worker {
+	runtime runtime.Runtime) (*Worker, error) {
 
 	newWorker := Worker{
 		logger:  parentLogger,
 		index:   index,
 		runtime: runtime,
 		context: nuclio.Context{
-			Logger: parentLogger.GetChild("event").(nuclio.Logger),
+			Logger: parentLogger.GetChild("event"),
 		},
 	}
 
 	// return an instance of the default worker
-	return &newWorker
+	return &newWorker, nil
 }
 
-// called by event sources
-func (w *Worker) ProcessEvent(evt nuclio.Event) (interface{}, error) {
-	evt.SetID(nuclio.NewID())
+// called by triggers
+func (w *Worker) ProcessEvent(event nuclio.Event, functionLogger nuclio.Logger) (interface{}, error) {
+	event.SetID(nuclio.NewID())
 
 	// process the event at the runtime
-	response, err := w.runtime.ProcessEvent(evt)
+	response, err := w.runtime.ProcessEvent(event, functionLogger)
+
+	// check if there was a processing error. if so, log it
+	if err != nil {
+		w.statistics.EventsHandleError++
+
+		// use the override function logger if passed, otherwise ask the runtime for the
+		// function logger
+		logger := functionLogger
+		if logger == nil {
+			logger = w.runtime.GetFunctionLogger()
+		}
+
+		logger.WarnWith("Function returned error", "event_id", event.GetID(), "err", err)
+	} else {
+		w.statistics.EventsHandleSuccess++
+	}
 
 	return response, err
+}
+
+func (w *Worker) GetStatistics() *Statistics {
+	return &w.statistics
+}
+
+func (w *Worker) GetIndex() int {
+	return w.index
+}
+
+func (w *Worker) GetRuntime() runtime.Runtime {
+	return w.runtime
 }

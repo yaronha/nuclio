@@ -20,10 +20,13 @@ import (
 	"os"
 
 	"github.com/nuclio/nuclio/cmd/nuctl/app"
+	"github.com/nuclio/nuclio/pkg/errors"
 )
 
 func main() {
 	if err := app.Run(); err != nil {
+
+		errors.PrintErrorStack(os.Stderr, err, 5)
 		os.Exit(1)
 	}
 

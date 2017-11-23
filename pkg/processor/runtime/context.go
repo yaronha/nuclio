@@ -19,25 +19,26 @@ package runtime
 import (
 	"net/url"
 
+	"github.com/nuclio/nuclio/pkg/errors"
+
 	"github.com/iguazio/v3io-go-http"
 	"github.com/nuclio/nuclio-sdk"
-	"github.com/pkg/errors"
 )
 
 func newContext(parentLogger nuclio.Logger, configuration *Configuration) (*nuclio.Context, error) {
+
 	newContext := &nuclio.Context{
 		Logger:      parentLogger,
 		DataBinding: map[string]nuclio.DataBinding{},
 	}
-
 	// create v3io context if applicable
 	for dataBindingName, dataBinding := range configuration.DataBindings {
 		if dataBinding.Class == "v3io" {
 
 			// create a container object that can be used by the event handlers
-			container, err := createV3ioDataBinding(parentLogger, dataBinding.Url)
+			container, err := createV3ioDataBinding(parentLogger, dataBinding.URL)
 			if err != nil {
-				return nil, errors.Wrapf(err, "Failed to create v3io client for %s", dataBinding.Url)
+				return nil, errors.Wrapf(err, "Failed to create v3io client for %s", dataBinding.URL)
 			}
 
 			newContext.DataBinding[dataBindingName] = container
@@ -47,13 +48,27 @@ func newContext(parentLogger nuclio.Logger, configuration *Configuration) (*nucl
 	return newContext, nil
 }
 
+// Adapt from nuclio.Logger to v3io.Logger
+type nuclioLogAdapter struct {
+	nuclio.Logger
+}
+
+func (la *nuclioLogAdapter) GetChild(name string) interface{} {
+	return &nuclioLogAdapter{la.Logger.GetChild(name)}
+}
+
 func createV3ioDataBinding(parentLogger nuclio.Logger, url string) (*v3io.Container, error) {
+	parentLogger.InfoWith("Creating v3io data binding", "url", url)
 
 	// parse the URL to get address and container ID
 	addr, containerAlias, err := parseURL(url)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to parse URL")
+	}
 
 	// create context
-	context, err := v3io.NewContext(parentLogger, addr, 8)
+	logAdapter := &nuclioLogAdapter{parentLogger}
+	context, err := v3io.NewContext(logAdapter, addr, 8)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to create client")
 	}

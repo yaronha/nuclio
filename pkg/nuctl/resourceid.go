@@ -14,14 +14,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package nucliocli
+package nuctl
 
 import (
 	"fmt"
 	"strconv"
 	"strings"
 
-	"github.com/pkg/errors"
+	"github.com/nuclio/nuclio/pkg/errors"
 )
 
 func ParseResourceIdentifier(resourceIdentifier string) (resourceName string,

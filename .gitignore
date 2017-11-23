@@ -1,6 +1,7 @@
 .idea
-test/http-bench/out/
-_output
 .vagrant
+.vscode
+__pycache__
+test/http-bench/out/
 
 *.log

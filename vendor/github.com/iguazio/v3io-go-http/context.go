@@ -69,8 +69,20 @@ func (c *Context) workerEntry(workerIndex int) {
 			response, err = request.container.Sync.GetItems(typedInput)
 		case *PutItemInput:
 			err = request.container.Sync.PutItem(typedInput)
+		case *PutItemsInput:
+			response, err = request.container.Sync.PutItems(typedInput)
 		case *UpdateItemInput:
 			err = request.container.Sync.UpdateItem(typedInput)
+		case *CreateStreamInput:
+			err = request.container.Sync.CreateStream(typedInput)
+		case *DeleteStreamInput:
+			err = request.container.Sync.DeleteStream(typedInput)
+		case *SeekShardInput:
+			response, err = request.container.Sync.SeekShard(typedInput)
+		case *PutRecordsInput:
+			response, err = request.container.Sync.PutRecords(typedInput)
+		case *GetRecordsInput:
+			response, err = request.container.Sync.GetRecords(typedInput)
 		default:
 			c.logger.ErrorWith("Got unexpected request type", "request", request)
 		}

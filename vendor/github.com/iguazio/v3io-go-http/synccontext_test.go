@@ -24,7 +24,7 @@ type SyncContextTestSuite struct {
 func (suite *SyncContextTestSuite) SetupTest() {
 	var err error
 
-	suite.logger, err = nucliozap.NewNuclioZap("test", nucliozap.DebugLevel)
+	suite.logger, err = nucliozap.NewNuclioZapTest("test")
 
 	suite.context, err = NewContext(suite.logger, "192.168.51.240:8081", 1)
 	suite.Require().NoError(err, "Failed to create context")
@@ -37,31 +37,14 @@ func (suite *SyncContextTestSuite) SetupTest() {
 }
 
 //
-// API tests (all commands and such)
+// Object tests
 //
 
-type SyncContextApiTestSuite struct {
+type SyncContextObjectTestSuite struct {
 	SyncContextTestSuite
 }
 
-//func (suite *SyncContextApiTestSuite) TestListAll() {
-//
-//	// get all buckets
-//	response, err := suite.container.Sync.ListAll()
-//	suite.Require().NoError(err, "Failed to list all")
-//
-//	output := response.output.(*ListAllOutput)
-//
-//	// make sure buckets is not empty
-//	suite.Require().NotEmpty(output.Buckets, "Expected at least one bucket")
-//
-//	// release the response
-//	response.Release()
-//}
-
-func (suite *SyncContextApiTestSuite) TestObject() {
-	// suite.T().Skip()
-
+func (suite *SyncContextObjectTestSuite) TestObject() {
 	path := "object.txt"
 	contents := "vegans are better than everyone"
 
@@ -114,18 +97,24 @@ func (suite *SyncContextApiTestSuite) TestObject() {
 	suite.Require().Nil(response)
 }
 
-func (suite *SyncContextApiTestSuite) TestEMD() {
-	// suite.T().Skip()
+//
+// EMD tests
+//
 
+type SyncContextEMDTestSuite struct {
+	SyncContextTestSuite
+}
+
+func (suite *SyncContextEMDTestSuite) TestEMD() {
 	items := map[string]map[string]interface{}{
-		"bob":    {"age": 42, "feature": "mustance"},
+		"bob":    {"age": 42, "feature": "mustache"},
 		"linda":  {"age": 41, "feature": "singing"},
 		"louise": {"age": 9, "feature": "bunny ears"},
 		"tina":   {"age": 14, "feature": "butts"},
 	}
 
 	//
-	// Create and update items
+	// Create items one by one
 	//
 
 	// create the items
@@ -140,6 +129,14 @@ func (suite *SyncContextApiTestSuite) TestEMD() {
 		suite.Require().NoError(err, "Failed to put item")
 	}
 
+	suite.verifyItems(items)
+
+	//
+	// Update item and verify
+	//
+
+	condition := "age > 5"
+
 	// update louise item
 	updateItemInput := UpdateItemInput{
 		Path: "emd0/louise",
@@ -147,16 +144,13 @@ func (suite *SyncContextApiTestSuite) TestEMD() {
 			"height": 130,
 			"quip":   "i can smell fear on you",
 		},
+		Condition: &condition,
 	}
 
 	err := suite.container.Sync.UpdateItem(&updateItemInput)
 	suite.Require().NoError(err, "Failed to update item")
 
-	//
-	// Get item(s)
-	//
-
-	// get tina
+	// get louise
 	getItemInput := GetItemInput{
 		Path:           "emd0/louise",
 		AttributeNames: []string{"__size", "age", "quip", "height"},
@@ -233,6 +227,88 @@ func (suite *SyncContextApiTestSuite) TestEMD() {
 	// Delete everything
 	//
 
+	suite.deleteItems(items)
+}
+
+func (suite *SyncContextEMDTestSuite) TestPutItems() {
+	items := map[string]map[string]interface{}{
+		"bob":   {"age": 42, "feature": "mustache"},
+		"linda": {"age": 41, "feature": "singing"},
+	}
+
+	// get a specific bucket
+	response, err := suite.container.Sync.PutItems(&PutItemsInput{
+		Path:  "emd0",
+		Items: items,
+	})
+	suite.Require().NoError(err, "Failed to put items")
+
+	putItemsOutput := response.Output.(*PutItemsOutput)
+
+	// must succeed - everything was valid
+	suite.Require().True(putItemsOutput.Success)
+	suite.Require().Nil(putItemsOutput.Errors)
+
+	response.Release()
+
+	suite.verifyItems(items)
+
+	suite.deleteItems(items)
+}
+
+func (suite *SyncContextEMDTestSuite) TestPutItemsWithError() {
+	items := map[string]map[string]interface{}{
+		"bob":     {"age": 42, "feature": "mustache"},
+		"linda":   {"age": 41, "feature": "singing"},
+		"invalid": {"__name": "foo", "feature": "singing"},
+	}
+
+	// get a specific bucket
+	response, err := suite.container.Sync.PutItems(&PutItemsInput{
+		Path:  "emd0",
+		Items: items,
+	})
+	suite.Require().NoError(err, "Failed to put items")
+
+	putItemsOutput := response.Output.(*PutItemsOutput)
+
+	// must succeed - everything was valid
+	suite.Require().False(putItemsOutput.Success)
+	suite.Require().NotNil(putItemsOutput.Errors)
+	suite.Require().NotNil(putItemsOutput.Errors["invalid"])
+
+	response.Release()
+
+	// remove invalid because it shouldn't be verified / deleted
+	delete(items, "invalid")
+
+	suite.verifyItems(items)
+
+	suite.deleteItems(items)
+}
+
+func (suite *SyncContextEMDTestSuite) verifyItems(items map[string]map[string]interface{}) {
+
+	// get all items
+	getItemsInput := GetItemsInput{
+		Path:           "emd0/",
+		AttributeNames: []string{"*"},
+	}
+
+	response, err := suite.container.Sync.GetItems(&getItemsInput)
+	suite.Require().NoError(err, "Failed to get items")
+
+	getItemsOutput := response.Output.(*GetItemsOutput)
+	suite.Require().Len(getItemsOutput.Items, len(items))
+
+	// TODO: test values
+
+	// release the response
+	response.Release()
+}
+
+func (suite *SyncContextEMDTestSuite) deleteItems(items map[string]map[string]interface{}) {
+
 	// delete the items
 	for itemKey, _ := range items {
 		input := DeleteObjectInput{
@@ -245,11 +321,156 @@ func (suite *SyncContextApiTestSuite) TestEMD() {
 	}
 
 	// delete the directory
-	err = suite.container.Sync.DeleteObject(&DeleteObjectInput{
+	err := suite.container.Sync.DeleteObject(&DeleteObjectInput{
 		Path: "emd0/",
 	})
 
 	suite.Require().NoError(err, "Failed to delete")
+}
+
+//
+// Stream tests
+//
+
+type SyncContextStreamTestSuite struct {
+	SyncContextTestSuite
+	testPath string
+}
+
+func (suite *SyncContextStreamTestSuite) SetupTest() {
+	suite.SyncContextTestSuite.SetupTest()
+
+	suite.testPath = "stream-test"
+
+	suite.deleteAllStreamsInPath(suite.testPath)
+}
+
+func (suite *SyncContextStreamTestSuite) TearDownTest() {
+	suite.deleteAllStreamsInPath(suite.testPath)
+}
+
+func (suite *SyncContextStreamTestSuite) TestStream() {
+	streamPath := fmt.Sprintf("%s/mystream/", suite.testPath)
+
+	//
+	// Create the stream
+	//
+
+	err := suite.container.Sync.CreateStream(&CreateStreamInput{
+		Path:                 streamPath,
+		ShardCount:           4,
+		RetentionPeriodHours: 1,
+	})
+
+	suite.Require().NoError(err, "Failed to create stream")
+
+	//
+	// Put some records
+	//
+
+	firstShardID := 1
+	secondShardID := 2
+	invalidShardID := 10
+
+	records := []*StreamRecord{
+		{ShardID: &firstShardID, Data: []byte("first shard record #1")},
+		{ShardID: &firstShardID, Data: []byte("first shard record #2")},
+		{ShardID: &invalidShardID, Data: []byte("invalid shard record #1")},
+		{ShardID: &secondShardID, Data: []byte("second shard record #1")},
+		{Data: []byte("some shard record #1")},
+	}
+
+	response, err := suite.container.Sync.PutRecords(&PutRecordsInput{
+		Path:    streamPath,
+		Records: records,
+	})
+	suite.Require().NoError(err, "Failed to put records")
+
+	putRecordsResponse := response.Output.(*PutRecordsOutput)
+
+	// should have one failure
+	suite.Require().Equal(1, putRecordsResponse.FailedRecordCount)
+
+	// verify record results
+	for recordIdx, record := range putRecordsResponse.Records {
+
+		// third record should've failed
+		if recordIdx == 2 {
+			suite.Require().NotEqual(0, record.ErrorCode)
+		} else {
+			suite.Require().Equal(0, record.ErrorCode)
+		}
+	}
+
+	response.Release()
+
+	//
+	// Seek
+	//
+
+	response, err = suite.container.Sync.SeekShard(&SeekShardInput{
+		Path: streamPath + "1",
+		Type: SeekShardInputTypeEarliest,
+	})
+
+	suite.Require().NoError(err, "Failed to seek shard")
+	location := response.Output.(*SeekShardOutput).Location
+
+	suite.Require().NotEqual("", location)
+
+	response.Release()
+
+	//
+	// Get records
+	//
+
+	response, err = suite.container.Sync.GetRecords(&GetRecordsInput{
+		Path:     streamPath + "1",
+		Location: location,
+		Limit:    100,
+	})
+
+	suite.Require().NoError(err, "Failed to get records")
+
+	getRecordsOutput := response.Output.(*GetRecordsOutput)
+
+	suite.Require().Equal("first shard record #1", string(getRecordsOutput.Records[0].Data))
+	suite.Require().Equal("first shard record #2", string(getRecordsOutput.Records[1].Data))
+
+	response.Release()
+
+	//
+	// Delete stream
+	//
+
+	err = suite.container.Sync.DeleteStream(&DeleteStreamInput{
+		Path: streamPath,
+	})
+	suite.Require().NoError(err, "Failed to delete stream")
+}
+
+func (suite *SyncContextStreamTestSuite) deleteAllStreamsInPath(path string) error {
+
+	// get all streams in the test path
+	response, err := suite.container.Sync.ListBucket(&ListBucketInput{
+		Path: path,
+	})
+
+	if err != nil {
+		return err
+	}
+
+	defer response.Release()
+
+	// iterate over streams (prefixes) and delete them
+	for _, commonPrefix := range response.Output.(*ListBucketOutput).CommonPrefixes {
+
+		suite.container.Sync.DeleteStream(&DeleteStreamInput{
+			Path: commonPrefix.Prefix,
+		})
+	}
+
+	return nil
 }
 
 //
@@ -426,7 +647,9 @@ func (suite *SyncContextStressTestSuite) TestStressPutGet() {
 // In order for 'go test' to run this suite, we need to create
 // a normal test function and pass our suite to suite.Run
 func TestSyncContextTestSuite(t *testing.T) {
-	suite.Run(t, new(SyncContextApiTestSuite))
+	suite.Run(t, new(SyncContextObjectTestSuite))
+	suite.Run(t, new(SyncContextEMDTestSuite))
+	suite.Run(t, new(SyncContextStreamTestSuite))
 	suite.Run(t, new(SyncContextCursorTestSuite))
 	suite.Run(t, new(SyncContextStressTestSuite))
 }

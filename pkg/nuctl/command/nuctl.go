@@ -19,48 +19,67 @@ package command
 import (
 	"os"
 
-	"github.com/nuclio/nuclio-sdk"
-	"github.com/nuclio/nuclio/pkg/nuctl"
+	"github.com/nuclio/nuclio/pkg/errors"
+	"github.com/nuclio/nuclio/pkg/platform"
+	"github.com/nuclio/nuclio/pkg/platform/factory"
+	"github.com/nuclio/nuclio/pkg/platform/kube"
 	"github.com/nuclio/nuclio/pkg/zap"
 
-	"github.com/mitchellh/go-homedir"
-	"github.com/pkg/errors"
+	"github.com/nuclio/nuclio-sdk"
 	"github.com/spf13/cobra"
-	"path/filepath"
+	// load authentication modes
+	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
+	_ "k8s.io/client-go/plugin/pkg/client/auth/oidc"
 )
 
 type RootCommandeer struct {
-	cmd           *cobra.Command
-	commonOptions nucliocli.CommonOptions
+	logger                nuclio.Logger
+	cmd                   *cobra.Command
+	platformName          string
+	platform              platform.Platform
+	namespace             string
+	verbose               bool
+	platformConfiguration interface{}
+
+	// platform specific configurations
+	kubeConfiguration kube.Configuration
 }
 
 func NewRootCommandeer() *RootCommandeer {
 	commandeer := &RootCommandeer{}
 
 	cmd := &cobra.Command{
-		Use:          "nuctl [command]",
-		Short:        "nuclio command line interface",
-		SilenceUsage: true,
+		Use:           "nuctl [command]",
+		Short:         "nuclio command line interface",
+		SilenceUsage:  true,
+		SilenceErrors: true,
 	}
 
-	kubeconfigPathDefault, err := commandeer.getDefaultKubeconfigPath()
-	if err != nil {
-		kubeconfigPathDefault = ""
+	defaultPlatformType := os.Getenv("NUCLIO_PLATFORM")
+	if defaultPlatformType == "" {
+		defaultPlatformType = "auto"
 	}
 
-	cmd.PersistentFlags().BoolVarP(&commandeer.commonOptions.Verbose, "verbose", "v", false, "verbose output")
-	cmd.PersistentFlags().StringVarP(&commandeer.commonOptions.KubeconfigPath, "kubeconfig", "k", kubeconfigPathDefault,
+	cmd.PersistentFlags().BoolVarP(&commandeer.verbose, "verbose", "v", false, "verbose output")
+	cmd.PersistentFlags().StringVarP(&commandeer.platformName, "platform", "", defaultPlatformType, "One of kube/local/auto")
+	cmd.PersistentFlags().StringVarP(&commandeer.namespace, "namespace", "n", "default", "Kubernetes namespace")
+
+	// platform specific
+	cmd.PersistentFlags().StringVarP(&commandeer.kubeConfiguration.KubeconfigPath,
+		"kubeconfig",
+		"k",
+		commandeer.kubeConfiguration.KubeconfigPath,
 		"Path to Kubernetes config (admin.conf)")
-	cmd.PersistentFlags().StringVarP(&commandeer.commonOptions.Namespace, "namespace", "n", "default", "Kubernetes namespace")
 
 	// add children
 	cmd.AddCommand(
+		newBuildCommandeer(commandeer).cmd,
+		newDeployCommandeer(commandeer).cmd,
+		newInvokeCommandeer(commandeer).cmd,
 		newGetCommandeer(commandeer).cmd,
 		newDeleteCommandeer(commandeer).cmd,
-		newBuildCommandeer(commandeer).cmd,
-		newRunCommandeer(commandeer).cmd,
-		newExecuteCommandeer(commandeer).cmd,
 		newUpdateCommandeer(commandeer).cmd,
+		newVersionCommandeer(commandeer).cmd,
 	)
 
 	commandeer.cmd = cmd
@@ -68,37 +87,63 @@ func NewRootCommandeer() *RootCommandeer {
 	return commandeer
 }
 
+// Execute uses os.Args to execute the command
 func (rc *RootCommandeer) Execute() error {
 	return rc.cmd.Execute()
 }
 
-func (rc *RootCommandeer) getDefaultKubeconfigPath() (string, error) {
-	envKubeconfig := os.Getenv("KUBECONFIG")
-	if envKubeconfig != "" {
-		return envKubeconfig, nil
-	}
+// GetCmd returns the underlying cobra command
+func (rc *RootCommandeer) GetCmd() *cobra.Command {
+	return rc.cmd
+}
 
-	homeDir, err := homedir.Dir()
+func (rc *RootCommandeer) initialize() error {
+	var err error
+
+	rc.logger, err = rc.createLogger()
 	if err != nil {
-		return "", errors.Wrap(err, "Failed to get home directory")
+		return errors.Wrap(err, "Failed to create logger")
 	}
 
-	return filepath.Join(homeDir, ".kube", "config"), nil
+	rc.platform, err = rc.createPlatform(rc.logger)
+	if err != nil {
+		return errors.Wrap(err, "Failed to create logger")
+	}
+
+	rc.logger.DebugWith("Created platform", "name", rc.platform.GetName())
+
+	return nil
 }
 
 func (rc *RootCommandeer) createLogger() (nuclio.Logger, error) {
 	var loggerLevel nucliozap.Level
 
-	if rc.commonOptions.Verbose {
+	if rc.verbose {
 		loggerLevel = nucliozap.DebugLevel
 	} else {
 		loggerLevel = nucliozap.InfoLevel
 	}
 
-	logger, err := nucliozap.NewNuclioZap("nuctl", loggerLevel)
+	logger, err := nucliozap.NewNuclioZapCmd("nuctl", loggerLevel)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to create logger")
 	}
 
 	return logger, nil
+}
+
+func (rc *RootCommandeer) createPlatform(logger nuclio.Logger) (platform.Platform, error) {
+
+	// ask the factory to create the appropriate platform
+	// TODO: as more platforms are supported, i imagine the last argument will be to some
+	// sort of configuration provider interface
+	platformInstance, err := factory.CreatePlatform(logger, rc.platformName, &rc.kubeConfiguration)
+
+	// set platform specific common
+	switch platformInstance.(type) {
+	case (*kube.Platform):
+		rc.platformConfiguration = &rc.kubeConfiguration
+	}
+
+	return platformInstance, err
 }
