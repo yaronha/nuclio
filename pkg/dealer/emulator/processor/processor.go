@@ -17,62 +17,59 @@ limitations under the License.
 package processor
 
 import (
+	"fmt"
+	"github.com/go-chi/chi"
 	"github.com/go-chi/render"
 	"github.com/nuclio/nuclio-sdk"
-	"github.com/go-chi/chi"
-	"fmt"
-	"net/http"
 	"github.com/nuclio/nuclio/pkg/dealer/jobs"
-	"os"
+	"net/http"
+	"time"
 )
 
-func NewProcessEmulator(logger nuclio.Logger, proc *jobs.Process) (ProcessEmulator, error) {
-	newEmulator := ProcessEmulator{logger:logger}
-	newproc, err := jobs.NewProcess(logger, nil, &jobs.ProcessMessage{BaseProcess: proc.BaseProcess})
-	if err != nil {
-		fmt.Printf("Failed to create process: %s", err)
-		os.Exit(1)
-	}
-	newEmulator.proc = newproc
-	newEmulator.jobs = map[string]*jobs.Job{}
+func NewProcessEmulator(logger nuclio.Logger, proc *jobs.ProcessMessage) (ProcessEmulator, error) {
+	newEmulator := ProcessEmulator{logger: logger}
+	newEmulator.proc = &LocalProcess{BaseProcess: proc.BaseProcess}
+	newEmulator.proc.jobs = map[string]jobs.JobShort{}
 	return newEmulator, nil
 }
 
 type ProcessEmulator struct {
-	logger     nuclio.Logger
-	port       int
-	proc       *jobs.Process
-	jobs       map[string]*jobs.Job
+	logger nuclio.Logger
+	port   int
+	proc   *LocalProcess
+	//jobs       map[string]*jobs.Job
+}
+
+type LocalProcess struct {
+	jobs.BaseProcess
+	LastUpdate time.Time `json:"lastUpdate,omitempty"`
+	jobs       map[string]jobs.JobShort
+}
+
+// return an enriched process struct for API
+func (p *LocalProcess) GetProcessState() *jobs.ProcessMessage {
+	msg := jobs.ProcessMessage{BaseProcess: p.BaseProcess}
+	msg.Jobs = p.jobs
+	return &msg
 }
 
 // Start listener
 func (p *ProcessEmulator) Start() error {
 	r := chi.NewRouter()
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		procMsg := jobs.ProcessMessage{BaseProcess: p.proc.BaseProcess}
-		procMsg.Tasks = []jobs.TaskMessage{}
-		procMsg.Jobs = map[string]jobs.JobShort{}
+		procMsg := p.proc.GetProcessState()
 
-		for _, task := range p.proc.GetTasks(false) {
-			taskJob := task.GetJob()
-			procMsg.Tasks = append(procMsg.Tasks, jobs.TaskMessage{BaseTask:task.BaseTask, Job:taskJob.Name})
-			if _, ok := procMsg.Jobs[taskJob.Name]; !ok {
-				procMsg.Jobs[taskJob.Name] = jobs.JobShort{TotalTasks:taskJob.TotalTasks, Metadata:taskJob.Metadata}
-			}
-		}
-
-		if err := render.Render(w, r, &procMsg); err != nil {
+		if err := render.Render(w, r, procMsg); err != nil {
 			render.Render(w, r, ErrRender(err))
 			return
 		}
 	})
 
-	r.Route("/events", func(r chi.Router) {
+	r.Route("/triggers", func(r chi.Router) {
 		r.Post("/", p.eventUpdate)
 	})
 
-
-	fmt.Printf("Proc %s/%s Function: %s:%s - Listening on port: %d\n",p.proc.Namespace ,p.proc.Name , p.proc.Function, p.proc.Version, p.proc.Port)
+	fmt.Printf("Proc %s/%s Function: %s:%s - Listening on port: %d\n", p.proc.Namespace, p.proc.Name, p.proc.Function, p.proc.Version, p.proc.Port)
 	return http.ListenAndServe(fmt.Sprintf(":%d", p.proc.Port), r)
 }
 
@@ -85,7 +82,7 @@ func (p *ProcessEmulator) eventUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p.logger.InfoWith("Update","process",data)
+	p.logger.InfoWith("Update", "process", data)
 	msg, err := p.emulateProcess(data)
 
 	if err != nil {
@@ -93,53 +90,48 @@ func (p *ProcessEmulator) eventUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p.logger.InfoWith("Send update resp","process",msg)
+	p.logger.InfoWith("Send update resp", "process", msg)
 	if err := render.Render(w, r, msg); err != nil {
 		render.Render(w, r, ErrRender(err))
 		return
 	}
 }
-// Process update message
-func (p *ProcessEmulator) emulateProcess(proc *jobs.ProcessMessage)  (*jobs.ProcessMessage, error)  {
 
-	for jobname, jobmeta := range proc.Jobs {
+// Process update message
+func (p *ProcessEmulator) emulateProcess(msg *jobs.ProcessMessage) (*jobs.ProcessMessage, error) {
+
+	respmsg := jobs.ProcessMessage{BaseProcess: p.proc.BaseProcess}
+	respmsg.Jobs = map[string]jobs.JobShort{}
+
+	for jobname, jobmsg := range msg.Jobs {
 
 		// Add new jobs if not found locally
-		_, ok := p.jobs[jobname]
+		job, ok := p.proc.jobs[jobname]
 		if !ok {
-			newJob := &jobs.Job{Name:jobname, Namespace:p.proc.Namespace,
-				Function:p.proc.Function, Version:p.proc.Version,
-				TotalTasks:jobmeta.TotalTasks,
-			}
-			p.jobs[jobname] = newJob
+			job = jobs.JobShort{TotalTasks: jobmsg.TotalTasks, Metadata: jobmsg.Metadata}
+			p.logger.DebugWith("Added new job", "name", jobname)
 		}
 
-	}
-
-	tasklist := []jobs.TaskMessage{}
-	for _, task := range proc.Tasks {
-		// Process Tasks: Stop, Update, or Add
-		taskMsg := task.Copy()
-		switch task.State {
-		case jobs.TaskStateStopping:
-			taskMsg.State = jobs.TaskStateDeleted
-			tasklist = append(tasklist, taskMsg)
-			p.proc.RemoveTask(task.Job, task.Id)
-		default:
-			localTask := p.proc.GetTask(task.Job, task.Id)
-			if localTask == nil {
-				job := p.jobs[task.Job]
-				localTask = &jobs.Task{BaseTask:jobs.BaseTask{Id:task.Id}}
-				localTask.SetJob(job)
-				p.proc.AddTasks([]*jobs.Task{localTask})
+		localList := []jobs.TaskMessage{}
+		respList := []jobs.TaskMessage{}
+		for _, task := range jobmsg.Tasks {
+			// Process Tasks: Stop, Update, or Add
+			taskMsg := task.Copy()
+			switch task.State {
+			case jobs.TaskStateStopping:
+				taskMsg.State = jobs.TaskStateDeleted
+				respList = append(respList, taskMsg)
+			default:
+				taskMsg.State = jobs.TaskStateRunning
+				localList = append(localList, taskMsg)
+				respList = append(respList, taskMsg)
 			}
-			localTask.State = jobs.TaskStateRunning
-			taskMsg.State = jobs.TaskStateRunning
-			tasklist = append(tasklist, taskMsg)
 		}
+
+		job.Tasks = localList
+		p.proc.jobs[jobname] = job
+		respmsg.Jobs[jobname] = jobs.JobShort{TotalTasks: jobmsg.TotalTasks, Metadata: jobmsg.Metadata, Tasks: respList}
 	}
 
-	proc.Tasks = tasklist
-	return proc, nil
+	return &respmsg, nil
 }
-

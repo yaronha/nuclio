@@ -17,32 +17,32 @@ limitations under the License.
 package main
 
 import (
+	"encoding/json"
+	"flag"
+	"fmt"
 	"github.com/nuclio/nuclio-sdk"
+	"github.com/nuclio/nuclio/pkg/dealer/client"
+	"github.com/nuclio/nuclio/pkg/dealer/emulator/processor"
+	"github.com/nuclio/nuclio/pkg/dealer/jobs"
 	"github.com/nuclio/nuclio/pkg/zap"
 	"github.com/pkg/errors"
-	"flag"
 	"net"
-	"fmt"
 	"os"
-	"github.com/nuclio/nuclio/pkg/dealer/client"
 	"os/signal"
 	"syscall"
-	"github.com/nuclio/nuclio/pkg/dealer/emulator/processor"
-	"encoding/json"
-	"github.com/nuclio/nuclio/pkg/dealer/jobs"
 )
 
 func main() {
 
 	host, _ := os.Hostname()
-	name := flag.String("n", host , "Process name")
+	name := flag.String("n", host, "Process name")
 	ns := flag.String("s", "default", "Process namespace")
 	function := flag.String("f", os.Getenv("NUCLIO_FUNCTION_NAME"), "Function name")
 	version := flag.String("r", "latest", "Function version")
 	alias := flag.String("a", "latest", "Function alias")
 	url := flag.String("u", os.Getenv("DEALER_URL"), "Dealer ip:port")
-	port := flag.Int("p",8077,"local port")
-	reportedIP := flag.String("i", os.Getenv("REPORTED_IP"),"reported IP")
+	port := flag.Int("p", 8077, "local port")
+	reportedIP := flag.String("i", os.Getenv("REPORTED_IP"), "reported IP")
 	verbose := flag.Bool("v", true, "Verbose")
 	flag.Parse()
 
@@ -57,7 +57,7 @@ func main() {
 	}
 
 	logger, _ := createLogger(*verbose)
-	proc := jobs.Process{ BaseProcess: jobs.BaseProcess{Name:*name, Namespace:*ns, Function:*function, Version:*version, Alias:*alias, IP:ip, Port:*port}}
+	proc := jobs.ProcessMessage{BaseProcess: jobs.BaseProcess{Name: *name, Namespace: *ns, Function: *function, Version: *version, Alias: *alias, IP: ip, Port: *port}}
 
 	client, _ := client.NewContext(logger, *url)
 	headers := map[string]string{}
@@ -66,7 +66,6 @@ func main() {
 		fmt.Printf("Failed to Marshal: %s", err)
 		os.Exit(1)
 	}
-
 
 	if *url != "" {
 		path := fmt.Sprintf("http://%s/procs", *url)
@@ -88,7 +87,6 @@ func main() {
 		os.Exit(1)
 	}()
 
-
 	newEmulator, _ := processor.NewProcessEmulator(logger, &proc)
 	err = newEmulator.Start()
 	if err != nil {
@@ -98,7 +96,7 @@ func main() {
 
 }
 
-func getMyIP() (string,error) {
+func getMyIP() (string, error) {
 	conn, err := net.Dial("udp", "8.8.8.8:80")
 	if err != nil {
 		return "", err
@@ -106,9 +104,8 @@ func getMyIP() (string,error) {
 	defer conn.Close()
 
 	localAddr := conn.LocalAddr().(*net.UDPAddr)
-	return fmt.Sprintf("%s",localAddr.IP), nil
+	return fmt.Sprintf("%s", localAddr.IP), nil
 }
-
 
 func createLogger(verbose bool) (nuclio.Logger, error) {
 	var loggerLevel nucliozap.Level
@@ -119,7 +116,7 @@ func createLogger(verbose bool) (nuclio.Logger, error) {
 		loggerLevel = nucliozap.InfoLevel
 	}
 
-	logger, err := nucliozap.NewNuclioZap("nuclio-dealer", loggerLevel)
+	logger, err := nucliozap.NewNuclioZapCmd("dealer-pemu", loggerLevel)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to create logger")
 	}
@@ -127,5 +124,3 @@ func createLogger(verbose bool) (nuclio.Logger, error) {
 	return logger, nil
 
 }
-
-

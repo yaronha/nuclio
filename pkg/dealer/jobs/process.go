@@ -77,7 +77,7 @@ type ProcessMessage struct {
 type JobShort struct {
 	TotalTasks int           `json:"totalTasks"`
 	Tasks      []TaskMessage `json:"tasks,omitempty"`
-	Metadata   interface{}   `   json:"metadata,omitempty"`
+	Metadata   interface{}   `json:"metadata,omitempty"`
 }
 
 type procJob struct {

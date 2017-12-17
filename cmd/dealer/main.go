@@ -19,23 +19,24 @@ package main
 import (
 	"flag"
 	"fmt"
-	"os"
-	"github.com/nuclio/nuclio/cmd/dealer/app"
-	"github.com/nuclio/nuclio/pkg/dealer/portal"
 	"github.com/nuclio/nuclio-sdk"
+	"github.com/nuclio/nuclio/cmd/dealer/app"
+	"github.com/nuclio/nuclio/pkg/dealer/kubewatch"
+	"github.com/nuclio/nuclio/pkg/dealer/portal"
 	"github.com/nuclio/nuclio/pkg/zap"
 	"github.com/pkg/errors"
-	"github.com/nuclio/nuclio/pkg/dealer/kubewatch"
 	"k8s.io/client-go/kubernetes"
+	"os"
 	"time"
 )
 
 func run() error {
 	configPath := flag.String("config", "", "Path of configuration file")
 	//verbose    := flag.Bool("v", true, "Verbose")
-	kubeconf   := flag.String("k", "config", "Path to a kube config. Only required if out-of-cluster.")
-	namespace  := flag.String("n", "", "Namespace")
-	nopush  := flag.Bool("np", true, "Disable push pudates to process")
+	//kubeconf   := flag.String("k", "config", "Path to a kube config. Only required if out-of-cluster.")
+	kubeconf := flag.String("k", "", "Path to a kube config. Only required if out-of-cluster.")
+	namespace := flag.String("n", "", "Namespace")
+	nopush := flag.Bool("np", true, "Disable push pudates to process")
 	flag.Parse()
 
 	logger, _ := createLogger(true) //*verbose)
@@ -75,7 +76,6 @@ func run() error {
 
 	}
 
-
 	//Tests(dealer)
 
 	listenPort := 3000
@@ -105,7 +105,7 @@ func createLogger(verbose bool) (nuclio.Logger, error) {
 		loggerLevel = nucliozap.InfoLevel
 	}
 
-	logger, err := nucliozap.NewNuclioZap("nuclio-dealer", loggerLevel)
+	logger, err := nucliozap.NewNuclioZapCmd("nuclio-dealer", loggerLevel)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to create logger")
 	}
@@ -113,7 +113,6 @@ func createLogger(verbose bool) (nuclio.Logger, error) {
 	return logger, nil
 
 }
-
 
 func Tests(jm *app.JobManager) {
 	//jm.AddJob(&jobs.Job{Name:"myjob",FunctionURI:"f1",ExpectedProc:3, TotalTasks:11})
@@ -125,5 +124,3 @@ func Tests(jm *app.JobManager) {
 	//fmt.Println(jm.Jobs["myjob.default"].AsString())
 
 }
-
-
