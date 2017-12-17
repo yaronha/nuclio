@@ -23,6 +23,7 @@ import (
 
 	"github.com/nuclio/nuclio/pkg/dealer/client"
 	"github.com/nuclio/nuclio/pkg/dealer/jobs"
+	"github.com/yaronha/kubetest/xendor/k8s.io/client-go/pkg/util/json"
 	"time"
 )
 
@@ -93,6 +94,20 @@ func (jm *JobManager) Start() error {
 					break
 				}
 				jm.Ctx.Logger.DebugWith("Got proc response", "body", string(resp.Body()))
+				procMsg := &jobs.ProcessMessage{}
+				err := json.Unmarshal(resp.Body(), procMsg)
+				if err != nil {
+					jm.Ctx.Logger.ErrorWith("Failed to Unmarshal process resp", "body", string(resp.Body()), "err", err)
+				}
+
+				// if re get a request with unspecified proc state, assume it is ready
+				if procMsg.State == jobs.ProcessStateUnknown {
+					procMsg.State = jobs.ProcessStateReady
+				}
+				_, err = jm.updateProcess(procMsg, true, false)
+				if err != nil {
+					jm.Ctx.Logger.ErrorWith("Failed to update process resp", "body", string(resp.Body()), "err", err)
+				}
 
 			case req := <-jm.Ctx.RequestsChannel:
 				//jm.Ctx.Logger.DebugWith("Got chan request", "type", req.Type, "name", req.Name, "namespace", req.Namespace)
@@ -141,7 +156,7 @@ func (jm *JobManager) Start() error {
 					if procMsg.State == jobs.ProcessStateUnknown {
 						procMsg.State = jobs.ProcessStateReady
 					}
-					proc, err := jm.updateProcess(procMsg, true)
+					proc, err := jm.updateProcess(procMsg, true, true)
 					req.ReturnChan <- &jobs.RespChanType{
 						Err:    err,
 						Object: proc,
@@ -150,7 +165,7 @@ func (jm *JobManager) Start() error {
 				// process POD watch updates to figure out if process is ready
 				case jobs.RequestTypeProcUpdateState:
 					proc := req.Object.(*jobs.BaseProcess)
-					updatedProc, err := jm.updateProcess(&jobs.ProcessMessage{BaseProcess: *proc}, false)
+					updatedProc, err := jm.updateProcess(&jobs.ProcessMessage{BaseProcess: *proc}, false, true)
 					if req.ReturnChan != nil {
 						req.ReturnChan <- &jobs.RespChanType{
 							Err: err, Object: updatedProc}
@@ -313,7 +328,7 @@ func (jm *JobManager) processHealth(name, namespace string) error {
 	return nil
 }
 
-func (jm *JobManager) updateProcess(procMsg *jobs.ProcessMessage, checkTasks bool) (*jobs.ProcessMessage, error) {
+func (jm *JobManager) updateProcess(procMsg *jobs.ProcessMessage, checkTasks bool, isRequest bool) (*jobs.ProcessMessage, error) {
 
 	key := jobs.ProcessKey(procMsg.Name, procMsg.Namespace)
 	proc, ok := jm.Processes[key]
@@ -359,7 +374,7 @@ func (jm *JobManager) updateProcess(procMsg *jobs.ProcessMessage, checkTasks boo
 
 	proc.State = procMsg.State
 	if checkTasks {
-		err := proc.HandleTaskUpdates(procMsg, true)
+		err := proc.HandleTaskUpdates(procMsg, isRequest)
 		if err != nil {
 			return nil, err
 		}

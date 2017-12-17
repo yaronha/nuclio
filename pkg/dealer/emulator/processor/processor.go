@@ -83,7 +83,7 @@ func (p *ProcessEmulator) eventUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	p.logger.InfoWith("Update", "process", data)
-	msg, err := p.emulateProcess(data)
+	msg, err := p.EmulateProcess(data)
 
 	if err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
@@ -98,7 +98,7 @@ func (p *ProcessEmulator) eventUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 // Process update message
-func (p *ProcessEmulator) emulateProcess(msg *jobs.ProcessMessage) (*jobs.ProcessMessage, error) {
+func (p *ProcessEmulator) EmulateProcess(msg *jobs.ProcessMessage) (*jobs.ProcessMessage, error) {
 
 	respmsg := jobs.ProcessMessage{BaseProcess: p.proc.BaseProcess}
 	respmsg.Jobs = map[string]jobs.JobShort{}

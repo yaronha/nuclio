@@ -67,12 +67,20 @@ func main() {
 		os.Exit(1)
 	}
 
+	newEmulator, _ := processor.NewProcessEmulator(logger, &proc)
 	if *url != "" {
 		path := fmt.Sprintf("http://%s/procs", *url)
-		_, err = client.SendRequest("POST", path, headers, body, false)
+		resp, err := client.SendRequest("POST", path, headers, body, false)
 		if err != nil {
 			fmt.Printf("Failed to send: %s\n", err)
 		}
+
+		procMsg := &jobs.ProcessMessage{}
+		err = json.Unmarshal(resp.Body(), procMsg)
+		if err != nil {
+			logger.ErrorWith("Failed to Unmarshal process resp", "body", string(resp.Body()), "err", err)
+		}
+		newEmulator.EmulateProcess(procMsg)
 	}
 
 	c := make(chan os.Signal, 2)
@@ -87,7 +95,6 @@ func main() {
 		os.Exit(1)
 	}()
 
-	newEmulator, _ := processor.NewProcessEmulator(logger, &proc)
 	err = newEmulator.Start()
 	if err != nil {
 		fmt.Printf("Failed to start emulator: %s", err)

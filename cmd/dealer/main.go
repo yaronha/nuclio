@@ -36,7 +36,7 @@ func run() error {
 	//kubeconf   := flag.String("k", "config", "Path to a kube config. Only required if out-of-cluster.")
 	kubeconf := flag.String("k", "", "Path to a kube config. Only required if out-of-cluster.")
 	namespace := flag.String("n", "", "Namespace")
-	nopush := flag.Bool("np", true, "Disable push pudates to process")
+	nopush := flag.Bool("np", false, "Disable push pudates to process")
 	flag.Parse()
 
 	logger, _ := createLogger(true) //*verbose)
