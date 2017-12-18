@@ -17,7 +17,6 @@ limitations under the License.
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"github.com/nuclio/nuclio-sdk"
@@ -35,10 +34,10 @@ import (
 func run() error {
 	configPath := flag.String("config", "", "Path of configuration file")
 	verbose := flag.Bool("d", true, "Verbose")
-	//kubeconf   := flag.String("k", "config", "Path to a kube config. Only required if out-of-cluster.")
-	kubeconf := flag.String("k", "", "Path to a kube config. Only required if out-of-cluster.")
+	kubeconf := flag.String("k", "config", "Path to a kube config. Only required if out-of-cluster.")
+	//kubeconf := flag.String("k", "", "Path to a kube config. Only required if out-of-cluster.")
 	namespace := flag.String("n", "", "Namespace")
-	nopush := flag.Bool("np", false, "Disable push pudates to process")
+	nopush := flag.Bool("np", false, "Disable push updates to process")
 	flag.Parse()
 
 	logger, _ := createLogger(*verbose)
@@ -60,12 +59,29 @@ func run() error {
 		}
 	}
 
-	// TODO: List Deployments & Init, List Jobs & Init, List Processes & Init
-	dep := jobs.Deployment{}
-	json.Unmarshal([]byte(`{"name":"dep5","function":"f1","version":"latest", "expectedProc": 2, "triggers": [{"name":"job4", "totalTasks":5}]}`), &dep)
-	dealer.DeployMap.UpdateDeployment(&dep)
-	pmsg := jobs.BaseProcess{Name: "Yaronh-xps13", Namespace: "default", Function: "f1", Version: "latest", IP: "localhost", State: jobs.ProcessStateReady}
-	dealer.InitProcess(&jobs.ProcessMessage{BaseProcess: pmsg})
+	// Recover previous task state in case of restart/failure
+	// List Deployments & Init, List Jobs & Init, List Processes & Init
+	depList, err := kubewatch.ListDeployments(kubeClient, logger, *namespace)
+	if err != nil {
+		return err
+	}
+
+	for _, dep := range depList {
+		logger.DebugWith("Init, UpdateDeployment", "deploy", dep)
+		dealer.DeployMap.UpdateDeployment(dep)
+	}
+
+	// TODO: List Jobs & Init
+
+	procList, err := kubewatch.ListPods(kubeClient, logger, *namespace)
+	if err != nil {
+		return err
+	}
+
+	for _, proc := range procList {
+		logger.DebugWith("Init Process", "proc", proc)
+		dealer.InitProcess(&jobs.ProcessMessage{BaseProcess: *proc})
+	}
 
 	dealer.Ctx.DisablePush = *nopush
 	err = dealer.Start()

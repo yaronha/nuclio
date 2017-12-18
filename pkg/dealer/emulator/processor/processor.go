@@ -59,6 +59,7 @@ func (p *ProcessEmulator) Start() error {
 	r := chi.NewRouter()
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		procMsg := p.proc.GetProcessState()
+		p.logger.DebugWith("Get proc", "proc", procMsg)
 
 		if err := render.Render(w, r, procMsg); err != nil {
 			render.Render(w, r, ErrRender(err))

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/nuclio/nuclio-sdk"
 	"github.com/nuclio/nuclio/pkg/dealer/jobs"
+	"github.com/pkg/errors"
 	"github.com/yaronha/kubetest/xendor/k8s.io/client-go/pkg/util/json"
 	"k8s.io/api/apps/v1beta1"
 	"k8s.io/api/core/v1"
@@ -16,6 +17,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"time"
 )
+
+const NUCLIO_SELECTOR = "serverless=test"
 
 func GetClientConfig(kubeconfig string) (*rest.Config, error) {
 	if kubeconfig != "" {
@@ -52,7 +55,7 @@ func NewPodWatcher(client *kubernetes.Clientset, managerContext *jobs.ManagerCon
 	newWatcher.logger.Debug("Watching for POD changes")
 
 	opts := meta_v1.ListOptions{
-		LabelSelector: "serverless=test",
+		LabelSelector: NUCLIO_SELECTOR,
 	}
 
 	listWatch := &cache.ListWatch{
@@ -154,7 +157,7 @@ func NewDeployWatcher(client *kubernetes.Clientset, managerContext *jobs.Manager
 	newWatcher.logger.Debug("Watching for Deployment changes")
 
 	opts := meta_v1.ListOptions{
-		LabelSelector: "serverless=test",
+		LabelSelector: NUCLIO_SELECTOR,
 	}
 
 	listWatch := &cache.ListWatch{
@@ -235,4 +238,48 @@ type trigStruct struct {
 	Kind       string `json:"kind"`
 	Partitions int    `json:"partitions"`
 	MaxTasks   int    `json:"maxTasks"`
+}
+
+func ListDeployments(client *kubernetes.Clientset, logger nuclio.Logger, namespace string) ([]*jobs.Deployment, error) {
+
+	listOptions := meta_v1.ListOptions{
+		LabelSelector: NUCLIO_SELECTOR,
+	}
+
+	result, err := client.AppsV1beta1().Deployments(namespace).List(listOptions)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to list deployments")
+	}
+
+	logger.DebugWith("Got deployments", "num", len(result.Items))
+
+	depList := []*jobs.Deployment{}
+	for _, deployment := range result.Items {
+		depList = append(depList, getDeployStruct(&deployment))
+	}
+
+	return depList, nil
+}
+
+func ListPods(client *kubernetes.Clientset, logger nuclio.Logger, namespace string) ([]*jobs.BaseProcess, error) {
+
+	listOptions := meta_v1.ListOptions{
+		LabelSelector: NUCLIO_SELECTOR,
+	}
+
+	result, err := client.Core().Pods(namespace).List(listOptions)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to list pods")
+	}
+
+	logger.DebugWith("Got pods", "num", len(result.Items))
+
+	procList := []*jobs.BaseProcess{}
+	for _, pod := range result.Items {
+		proc := getProcStruct(&pod)
+		proc.State = getPodState(&pod)
+		procList = append(procList, proc)
+	}
+
+	return procList, nil
 }
