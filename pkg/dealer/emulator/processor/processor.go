@@ -30,6 +30,7 @@ func NewProcessEmulator(logger nuclio.Logger, proc *jobs.ProcessMessage) (Proces
 	newEmulator := ProcessEmulator{logger: logger}
 	newEmulator.proc = &LocalProcess{BaseProcess: proc.BaseProcess}
 	newEmulator.proc.jobs = map[string]jobs.JobShort{}
+	newEmulator.proc.State = jobs.ProcessStateReady
 	return newEmulator, nil
 }
 

@@ -17,10 +17,12 @@ limitations under the License.
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"github.com/nuclio/nuclio-sdk"
 	"github.com/nuclio/nuclio/cmd/dealer/app"
+	"github.com/nuclio/nuclio/pkg/dealer/jobs"
 	"github.com/nuclio/nuclio/pkg/dealer/kubewatch"
 	"github.com/nuclio/nuclio/pkg/dealer/portal"
 	"github.com/nuclio/nuclio/pkg/zap"
@@ -32,19 +34,38 @@ import (
 
 func run() error {
 	configPath := flag.String("config", "", "Path of configuration file")
-	//verbose    := flag.Bool("v", true, "Verbose")
+	verbose := flag.Bool("d", true, "Verbose")
 	//kubeconf   := flag.String("k", "config", "Path to a kube config. Only required if out-of-cluster.")
 	kubeconf := flag.String("k", "", "Path to a kube config. Only required if out-of-cluster.")
 	namespace := flag.String("n", "", "Namespace")
 	nopush := flag.Bool("np", false, "Disable push pudates to process")
 	flag.Parse()
 
-	logger, _ := createLogger(true) //*verbose)
+	logger, _ := createLogger(*verbose)
 
 	dealer, err := app.NewJobManager(*configPath, logger)
 	if err != nil {
 		return err
 	}
+
+	var kubeClient *kubernetes.Clientset
+	config, err := kubewatch.GetClientConfig(*kubeconf)
+	if err != nil {
+		logger.Warn("Did not find kubernetes config")
+	} else {
+		kubeClient, err = kubernetes.NewForConfig(config)
+		if err != nil {
+			logger.ErrorWith("Did not manage to create kubernetes NewForConfig", "config", config, "err", err)
+			kubeClient = nil
+		}
+	}
+
+	// TODO: List Deployments & Init, List Jobs & Init, List Processes & Init
+	dep := jobs.Deployment{}
+	json.Unmarshal([]byte(`{"name":"dep5","function":"f1","version":"latest", "expectedProc": 2, "triggers": [{"name":"job4", "totalTasks":5}]}`), &dep)
+	dealer.DeployMap.UpdateDeployment(&dep)
+	pmsg := jobs.BaseProcess{Name: "Yaronh-xps13", Namespace: "default", Function: "f1", Version: "latest", IP: "localhost", State: jobs.ProcessStateReady}
+	dealer.InitProcess(&jobs.ProcessMessage{BaseProcess: pmsg})
 
 	dealer.Ctx.DisablePush = *nopush
 	err = dealer.Start()
@@ -52,31 +73,20 @@ func run() error {
 		return err
 	}
 
-	config, err := kubewatch.GetClientConfig(*kubeconf)
-	if err != nil {
-		logger.Warn("Did not find kubernetes config")
-	} else {
-		fmt.Println(config) //TODO:
-		client, err := kubernetes.NewForConfig(config)
-		if err != nil {
-			return err
-		}
-
-		err = kubewatch.NewDeployWatcher(client, dealer.Ctx, logger, *namespace)
+	if kubeClient != nil {
+		err = kubewatch.NewDeployWatcher(kubeClient, dealer.Ctx, logger, *namespace)
 		if err != nil {
 			return err
 		}
 
 		time.Sleep(time.Second)
 
-		err = kubewatch.NewPodWatcher(client, dealer.Ctx, logger, *namespace)
+		err = kubewatch.NewPodWatcher(kubeClient, dealer.Ctx, logger, *namespace)
 		if err != nil {
 			return err
 		}
 
 	}
-
-	//Tests(dealer)
 
 	listenPort := 3000
 	portal, err := portal.NewPortal(logger, dealer.Ctx, listenPort)
@@ -111,16 +121,5 @@ func createLogger(verbose bool) (nuclio.Logger, error) {
 	}
 
 	return logger, nil
-
-}
-
-func Tests(jm *app.JobManager) {
-	//jm.AddJob(&jobs.Job{Name:"myjob",FunctionURI:"f1",ExpectedProc:3, TotalTasks:11})
-	//jm.AddProcess(&jobs.Process{Name:"p1",Function:"f1",Version:"latest", IP:"192.168.1.133", Port:5000})
-	//fmt.Println(jm.Jobs["myjob.default"].AsString())
-	//jm.AddProcess(&jobs.Process{Name:"p2",Function:"f1",Version:"latest"})
-	//fmt.Println(jm.Jobs["myjob.default"].AsString())
-	//jm.Jobs["myjob.default"].UpdateNumProcesses(2,true)
-	//fmt.Println(jm.Jobs["myjob.default"].AsString())
 
 }

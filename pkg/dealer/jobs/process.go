@@ -308,7 +308,7 @@ func (p *Process) PushUpdates() error {
 }
 
 // handle task update requests from process, or responses from process following Push Update ops
-func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest bool) error {
+func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest, isInit bool) error {
 
 	tasksDeleted := false
 	tasksStopping := false
@@ -316,8 +316,8 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest bool) error {
 	jobsToSave := map[string]*Job{}
 
 	// Update state of currently allocated tasks
-	for jobName, job := range msg.Jobs {
-		for _, msgTask := range job.Tasks {
+	for jobName, msgJob := range msg.Jobs {
+		for _, msgTask := range msgJob.Tasks {
 			taskID := msgTask.Id
 			job, ok := p.deployment.jobs[jobName]
 			if !ok {
@@ -352,14 +352,29 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest bool) error {
 			task.Progress = msgTask.Progress
 			task.Delay = msgTask.Delay
 
+			if isInit && msgTask.State != TaskStateDeleted {
+				if task.process != nil {
+					p.logger.WarnWith("Task process is not null during init", "processor", p.Name, "task", taskID, "job", jobName)
+				}
+				task.SetProcess(p)
+				_, ok := p.jobs[jobName]
+				if !ok {
+					p.jobs[jobName] = &procJob{job: job}
+				}
+				p.jobs[jobName].tasks = append(p.jobs[jobName].tasks, task)
+			}
+
 			switch msgTask.State {
 			case TaskStateDeleted:
-				task.State = TaskStateUnassigned
-				p.RemoveTask(jobName, taskID)
-				task.SetProcess(nil)
-				tasksDeleted = true
+				if !isInit {
+					task.State = TaskStateUnassigned
+					p.RemoveTask(jobName, taskID)
+					task.SetProcess(nil)
+					tasksDeleted = true
+				}
 			case TaskStateStopping:
 				// Tasks are still in Stopping state, so we keep the process in removingTasks state
+				task.State = TaskStateStopping
 				tasksStopping = true
 			case TaskStateCompleted:
 				if task.State != TaskStateCompleted {
@@ -374,7 +389,7 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest bool) error {
 				task.SetProcess(nil)
 			case TaskStateRunning:
 				// verify its a legal transition (e.g. we didnt ask to stop and got an old update)
-				if task.State == TaskStateRunning || task.State == TaskStateAlloc {
+				if isInit || task.State == TaskStateRunning || task.State == TaskStateAlloc {
 					task.State = msgTask.State
 				}
 			default:

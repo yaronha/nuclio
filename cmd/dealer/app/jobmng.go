@@ -24,6 +24,8 @@ import (
 	"github.com/nuclio/nuclio/pkg/dealer/client"
 	"github.com/nuclio/nuclio/pkg/dealer/jobs"
 	"github.com/yaronha/kubetest/xendor/k8s.io/client-go/pkg/util/json"
+	"io/ioutil"
+	"net/http"
 	"time"
 )
 
@@ -89,7 +91,7 @@ func (jm *JobManager) Start() error {
 		for {
 			select {
 			case resp, ok := <-jm.Ctx.ProcRespChannel:
-				// TODO: process responses
+				// process HTTP resp (from Process updates)
 				if !ok {
 					break
 				}
@@ -100,10 +102,12 @@ func (jm *JobManager) Start() error {
 					jm.Ctx.Logger.ErrorWith("Failed to Unmarshal process resp", "body", string(resp.Body()), "err", err)
 				}
 
-				// if re get a request with unspecified proc state, assume it is ready
+				// if we get a resp with unspecified proc state, assume it is ready
 				if procMsg.State == jobs.ProcessStateUnknown {
 					procMsg.State = jobs.ProcessStateReady
 				}
+
+				// Update the process state and tasks
 				_, err = jm.updateProcess(procMsg, true, false)
 				if err != nil {
 					jm.Ctx.Logger.ErrorWith("Failed to update process resp", "body", string(resp.Body()), "err", err)
@@ -328,6 +332,59 @@ func (jm *JobManager) processHealth(name, namespace string) error {
 	return nil
 }
 
+func (jm *JobManager) InitProcess(procMsg *jobs.ProcessMessage) {
+	key := jobs.ProcessKey(procMsg.Name, procMsg.Namespace)
+	proc, ok := jm.Processes[key]
+
+	if ok || procMsg.State != jobs.ProcessStateReady || procMsg.IP == "" {
+		jm.Ctx.Logger.DebugWith("process init, ignore process", "exist", ok, "process", procMsg)
+		return
+	}
+
+	jm.Ctx.Logger.InfoWith("Adding new process in init", "process", procMsg)
+
+	dep := jm.DeployMap.FindDeployment(procMsg.Namespace, procMsg.Function, procMsg.Version, false)
+	if dep == nil {
+		// if no deployment than it is likely a new process (no need to restore)
+		jm.Ctx.Logger.DebugWith("Deployment wasnt found in process init",
+			"namespace", procMsg.Namespace, "function", procMsg.Function, "version", procMsg.Version)
+		return
+	}
+
+	// TODO: do HTTP Gets in Go routines (i.e. split the function & use Chan), err handling
+	host := fmt.Sprintf("http://%s:%d", procMsg.IP, jobs.DEFAULT_PORT)
+	resp, err := http.Get(host)
+	if err != nil {
+		jm.Ctx.Logger.ErrorWith("process init, Failed get state", "host", host, "err", err)
+		return
+	}
+
+	body, _ := ioutil.ReadAll(resp.Body)
+	jm.Ctx.Logger.DebugWith("process init, get data", "host", host, "body", body)
+	procResp := &jobs.ProcessMessage{}
+	err = json.Unmarshal(body, procResp)
+	if err != nil {
+		jm.Ctx.Logger.ErrorWith("Failed to Unmarshal process resp", "body", string(body), "err", err)
+		return
+	}
+
+	proc, err = jobs.NewProcess(jm.Ctx.Logger, jm.Ctx, procResp)
+	if err != nil {
+		jm.Ctx.Logger.ErrorWith("Failed to init NewProcess", "deploy", dep.Name, "proc", proc.Name, "err", err)
+		return
+	}
+
+	jm.Processes[key] = proc
+	dep.AddProcess(proc)
+
+	err = proc.HandleTaskUpdates(procResp, false, true)
+	if err != nil {
+		jm.Ctx.Logger.ErrorWith("Failed to init process, HandleTaskUpdates", "deploy", dep.Name, "proc", proc.Name, "err", err)
+	}
+
+	return
+}
+
 func (jm *JobManager) updateProcess(procMsg *jobs.ProcessMessage, checkTasks bool, isRequest bool) (*jobs.ProcessMessage, error) {
 
 	key := jobs.ProcessKey(procMsg.Name, procMsg.Namespace)
@@ -368,13 +425,17 @@ func (jm *JobManager) updateProcess(procMsg *jobs.ProcessMessage, checkTasks boo
 		}
 	}
 
-	jm.Ctx.Logger.InfoWith("Update a process", "old", proc, "new", procMsg)
+	jm.Ctx.Logger.DebugWith("Update a process", "old", proc, "new", procMsg)
 	proc.LastUpdate = time.Now()
-	// TODO: handle state transitions
 
-	proc.State = procMsg.State
+	// TODO: handle state transitions
+	if proc.State != procMsg.State {
+		jm.Ctx.Logger.InfoWith("Updated process state", "process", proc.Name, "old", proc.State, "new", procMsg.State)
+		proc.State = procMsg.State
+	}
+
 	if checkTasks {
-		err := proc.HandleTaskUpdates(procMsg, isRequest)
+		err := proc.HandleTaskUpdates(procMsg, isRequest, false)
 		if err != nil {
 			return nil, err
 		}
