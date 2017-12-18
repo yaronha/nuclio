@@ -21,9 +21,9 @@ import (
 	"github.com/nuclio/nuclio-sdk"
 	"github.com/pkg/errors"
 
+	"encoding/json"
 	"github.com/nuclio/nuclio/pkg/dealer/client"
 	"github.com/nuclio/nuclio/pkg/dealer/jobs"
-	"github.com/yaronha/kubetest/xendor/k8s.io/client-go/pkg/util/json"
 	"io/ioutil"
 	"net/http"
 	"time"
@@ -360,7 +360,7 @@ func (jm *JobManager) InitProcess(procMsg *jobs.ProcessMessage) {
 	}
 
 	body, _ := ioutil.ReadAll(resp.Body)
-	jm.Ctx.Logger.DebugWith("process init, get data", "host", host, "body", body)
+	jm.Ctx.Logger.DebugWith("process init, got data", "host", host, "body", string(body))
 	procResp := &jobs.ProcessMessage{}
 	err = json.Unmarshal(body, procResp)
 	if err != nil {

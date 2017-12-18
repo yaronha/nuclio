@@ -1,11 +1,11 @@
 package kubewatch
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/nuclio/nuclio-sdk"
 	"github.com/nuclio/nuclio/pkg/dealer/jobs"
 	"github.com/pkg/errors"
-	"github.com/yaronha/kubetest/xendor/k8s.io/client-go/pkg/util/json"
 	"k8s.io/api/apps/v1beta1"
 	"k8s.io/api/core/v1"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
