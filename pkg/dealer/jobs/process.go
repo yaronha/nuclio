@@ -270,8 +270,8 @@ func (p *Process) StopNTasks(toDelete int) {
 				break
 			}
 		}
-
 	}
+	p.logger.DebugWith("StopNTasks", "processor", p.Name, "delete", toDelete, "stopped", taskStopped)
 }
 
 func (p *Process) getProcessURL() string {
@@ -344,7 +344,8 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest, isInit bool)
 
 			// verify the reporting process is the true owner of that task, we may have already re-alocated it
 			if task.process != nil && task.process.Name != p.Name {
-				p.logger.ErrorWith("Task process is null or mapped to a different process", "processor", p.Name, "task", taskID, "job", jobName)
+				p.logger.ErrorWith("Task process is mapped to a different process",
+					"processor", p.Name, "task", taskID, "job", jobName, "task-proc", task.process.Name)
 				hadTaskError = true
 				continue
 			}

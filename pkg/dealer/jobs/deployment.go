@@ -52,6 +52,7 @@ func (d *Deployment) AddProcess(proc *Process) {
 // handle process removal
 func (d *Deployment) RemoveProcess(proc *Process) error {
 
+	d.dm.logger.DebugWith("RemoveProcess", "deployment", d.Name, "process", proc.Name, "expProcs", d.ExpectedProc, "procs", len(d.procs))
 	err := proc.Remove()
 	if err != nil {
 		return errors.Wrap(err, "Failed to remove process")
@@ -60,7 +61,12 @@ func (d *Deployment) RemoveProcess(proc *Process) error {
 	d.procs[proc.Name].Remove()
 	delete(d.procs, proc.Name)
 
-	return d.Rebalance()
+	if len(d.procs) <= d.ExpectedProc {
+		// re-balance only once we removed overflow processes
+		return d.Rebalance()
+	}
+
+	return nil
 }
 
 func (d *Deployment) GetProcs() map[string]*Process {

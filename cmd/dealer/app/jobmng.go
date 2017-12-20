@@ -29,6 +29,8 @@ import (
 	"time"
 )
 
+const NUM_WEB_CLIENTS = 4
+
 func NewJobManager(config string, logger nuclio.Logger) (*JobManager, error) {
 	newManager := JobManager{}
 	newManager.Processes = make(map[string]*jobs.Process)
@@ -53,7 +55,7 @@ func NewJobManager(config string, logger nuclio.Logger) (*JobManager, error) {
 	newManager.Ctx.RequestsChannel = reqChan2
 	newManager.DeployMap, _ = jobs.NewDeploymentMap(logger, newManager.Ctx)
 
-	newManager.Ctx.Logger = logger
+	newManager.Ctx.Logger = logger.GetChild("jobMng").(nuclio.Logger)
 
 	return &newManager, nil
 }
@@ -82,7 +84,7 @@ func (jm *JobManager) Start() error {
 	// TODO: need a go routine that verify periodically PODs are up (check last update time and just verify old ones)
 	// can also use POD watch (periodic) & POD ready hook
 
-	err := jm.asyncClient.Start()
+	err := jm.asyncClient.Start(NUM_WEB_CLIENTS)
 	if err != nil {
 		return errors.Wrap(err, "Failed to start job manager - async client")
 	}

@@ -13,7 +13,7 @@ type DeploymentMap struct {
 
 func NewDeploymentMap(logger nuclio.Logger, context *ManagerContext) (*DeploymentMap, error) {
 	newDeploymentMap := DeploymentMap{
-		logger: logger.GetChild("DeploymentMap").(nuclio.Logger),
+		logger: logger.GetChild("depMap").(nuclio.Logger),
 		ctx:    context}
 	newDeploymentMap.deployments = map[string][]*Deployment{}
 	return &newDeploymentMap, nil
@@ -73,20 +73,15 @@ func (dm *DeploymentMap) UpdateDeployment(deployment *Deployment) error {
 
 			// check if the deployment scale changed
 			if dep.ExpectedProc != deployment.ExpectedProc {
-				// TODO: handle ExpectedProc change (rebalance)
 				dm.logger.DebugWith("Deployment scale changed",
 					"namespace", dep.Namespace, "function", dep.Function, "version", dep.Version,
 					"old-scale", dep.ExpectedProc, "new-scale", deployment.ExpectedProc)
 
-				if dep.ExpectedProc != deployment.ExpectedProc {
-
-					// TODO: change deployment expected (and rebalance)
-
-					dep.ExpectedProc = deployment.ExpectedProc
-					if dep.ExpectedProc != 0 {
-						dep.Rebalance()
-					}
-
+				oldValue := dep.ExpectedProc
+				dep.ExpectedProc = deployment.ExpectedProc
+				if dep.ExpectedProc != 0 && dep.ExpectedProc > oldValue {
+					// dont re-balance if we scale-down, wait for processes to stop
+					dep.Rebalance()
 				}
 			}
 

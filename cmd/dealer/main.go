@@ -59,28 +59,30 @@ func run() error {
 		}
 	}
 
-	// Recover previous task state in case of restart/failure
-	// List Deployments & Init, List Jobs & Init, List Processes & Init
-	depList, err := kubewatch.ListDeployments(kubeClient, logger, *namespace)
-	if err != nil {
-		return err
-	}
+	if kubeClient != nil {
+		// Recover previous task state in case of restart/failure
+		// List Deployments & Init, List Jobs & Init, List Processes & Init
+		depList, err := kubewatch.ListDeployments(kubeClient, logger, *namespace)
+		if err != nil {
+			return err
+		}
 
-	for _, dep := range depList {
-		logger.DebugWith("Init, UpdateDeployment", "deploy", dep)
-		dealer.DeployMap.UpdateDeployment(dep)
-	}
+		for _, dep := range depList {
+			logger.DebugWith("Init, UpdateDeployment", "deploy", dep)
+			dealer.DeployMap.UpdateDeployment(dep)
+		}
 
-	// TODO: List Jobs & Init
+		// TODO: List Jobs & Init
 
-	procList, err := kubewatch.ListPods(kubeClient, logger, *namespace)
-	if err != nil {
-		return err
-	}
+		procList, err := kubewatch.ListPods(kubeClient, logger, *namespace)
+		if err != nil {
+			return err
+		}
 
-	for _, proc := range procList {
-		logger.DebugWith("Init Process", "proc", proc)
-		dealer.InitProcess(&jobs.ProcessMessage{BaseProcess: *proc})
+		for _, proc := range procList {
+			logger.DebugWith("Init Process", "proc", proc)
+			dealer.InitProcess(&jobs.ProcessMessage{BaseProcess: *proc})
+		}
 	}
 
 	dealer.Ctx.DisablePush = *nopush
@@ -104,7 +106,7 @@ func run() error {
 
 	}
 
-	listenPort := 3000
+	listenPort := 30000
 	portal, err := portal.NewPortal(logger, dealer.Ctx, listenPort)
 	if err != nil {
 		return err
@@ -131,7 +133,7 @@ func createLogger(verbose bool) (nuclio.Logger, error) {
 		loggerLevel = nucliozap.InfoLevel
 	}
 
-	logger, err := nucliozap.NewNuclioZapCmd("nuclio-dealer", loggerLevel)
+	logger, err := nucliozap.NewNuclioZapCmd("dealer", loggerLevel)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to create logger")
 	}

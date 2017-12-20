@@ -18,56 +18,53 @@ package client
 
 import (
 	"github.com/nuclio/nuclio-sdk"
-	"fmt"
 )
 
 func NewAsyncClient(logger nuclio.Logger) (*AsyncClient, error) {
 
-	newAsyncClient := AsyncClient{logger:logger}
+	newAsyncClient := AsyncClient{logger: logger}
 	inChan := make(chan *ChanRequest, 100)
 	newAsyncClient.InChannel = inChan
 	return &newAsyncClient, nil
 }
 
 type ChanRequest struct {
-	Method    string
-	HostURL   string
-	Url       string
-	Headers   map[string]string
-	Body      []byte
-	NeedResp  bool
+	Method     string
+	HostURL    string
+	Url        string
+	Headers    map[string]string
+	Body       []byte
+	NeedResp   bool
 	ReturnChan chan *Response
 }
 
 type AsyncClient struct {
-	logger     nuclio.Logger
-	InChannel  chan *ChanRequest
+	logger    nuclio.Logger
+	InChannel chan *ChanRequest
 }
 
-func (a *AsyncClient) Start() error {
+func (a *AsyncClient) Start(workers int) error {
 
-	// TODO: start multiple go routines
-	go func() {
-		for {
-			request, ok := <-a.InChannel
+	for wk := 1; wk <= workers; wk++ {
+		go func() {
+			for {
+				request, ok := <-a.InChannel
 
-			fmt.Printf("async:%s\n", request.Body)
+				if !ok {
+					break
+				}
 
-			if !ok { break }
+				client, _ := NewContext(a.logger, request.HostURL)
+				resp, err := client.SendRequest(request.Method, request.Url, request.Headers, request.Body, request.NeedResp)
+				if err != nil {
+					a.logger.Error("Failed to send: %s", err)
+				} else {
+					request.ReturnChan <- resp
+				}
 
-			client, _ := NewContext(a.logger, request.HostURL)
-			resp, err := client.SendRequest(request.Method, request.Url, request.Headers, request.Body, request.NeedResp)
-			if err != nil {
-				a.logger.Error("Failed to send: %s", err)
-				fmt.Printf("Failed to send: %s", err)
 			}
-
-			fmt.Printf("resp:%s\n", resp.Body())
-
-			request.ReturnChan <- resp
-
-		}
-	}()
+		}()
+	}
 
 	return nil
 }
