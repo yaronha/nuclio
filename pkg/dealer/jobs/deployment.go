@@ -378,8 +378,19 @@ func (d *Deployment) AddJob(rjob *Job) error {
 // remove job while the deployment is working
 func (d *Deployment) RemoveJob(job *Job, force bool) error {
 
-	job.Stop(d.procs)
+	if job.IsStopping {
+		d.dm.logger.WarnWith("RemoveJob - Job already stopping", "function", d.Name, "job", job.Name)
+		return nil
+	}
 
+	job.Stop(d.procs)
+	if job.assignedTasks == 0 {
+		d.finalizeRemoveJob(job)
+	}
+	return nil
+}
+
+func (d *Deployment) finalizeRemoveJob(job *Job) error {
 	delete(d.jobs, job.Name)
 	return nil
 }

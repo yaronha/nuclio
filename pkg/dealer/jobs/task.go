@@ -42,7 +42,7 @@ type BaseTask struct {
 	// Task index within the job
 	Id int `json:"id"`
 	// Current state of the task
-	State TaskState `json:"state"`
+	state TaskState `json:"state"`
 	// Optional, Last checkpoint per task, e.g. the last stream pointer
 	// Checkpoint is periodically reported by the process and stored with the job state
 	// Checkpoint is provided to the process in case of task migration or restart after failure
@@ -57,12 +57,12 @@ type BaseTask struct {
 // Task request and response for the REST API
 type TaskMessage struct {
 	BaseTask
-	//Job         string          `json:"job"`
-	Process string `json:"process,omitempty"`
+	State   TaskState `json:"state"`
+	Process string    `json:"process,omitempty"`
 }
 
 func (t *TaskMessage) Copy() TaskMessage {
-	return TaskMessage{BaseTask: t.BaseTask, Process: t.Process} // Job:t.Job,
+	return TaskMessage{BaseTask: t.BaseTask, Process: t.Process, State: t.State} // Job:t.Job,
 }
 
 type Task struct {
@@ -77,19 +77,36 @@ func NewTask(id int, job *Job) *Task {
 }
 
 func (t *Task) String() string {
-	return fmt.Sprintf("%d%s", t.Id, StateStrings[t.State])
+	return fmt.Sprintf("%d%s", t.Id, StateStrings[t.state])
 }
 
-func (t *Task) ToMessage() TaskMessage {
+func (t *Task) ToMessage(withProc bool) TaskMessage {
 	pname := ""
-	if t.process != nil {
+	if withProc && t.process != nil {
 		pname = t.process.Name
 	}
-	return TaskMessage{BaseTask: t.BaseTask, Process: pname}
+	return TaskMessage{BaseTask: t.BaseTask, Process: pname, State: t.state}
 }
 
 func (t *Task) GetProcess() *Process {
 	return t.process
+}
+
+func (t *Task) GetState() TaskState {
+	return t.state
+}
+
+func (t *Task) SetState(state TaskState) {
+	if state == TaskStateUnassigned || state == TaskStateCompleted {
+		if state != t.state {
+			t.job.assignedTasks -= 1
+		}
+	} else {
+		if t.state == TaskStateUnassigned {
+			t.job.assignedTasks += 1
+		}
+	}
+	t.state = state
 }
 
 func (t *Task) SetProcess(proc *Process) {

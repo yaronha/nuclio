@@ -127,9 +127,12 @@ func (p *Process) Remove() error {
 
 	for _, job := range p.jobs {
 		for _, task := range job.tasks {
-			task.State = TaskStateUnassigned
+			task.SetState(TaskStateUnassigned)
 			task.SetProcess(nil)
 			task.LastUpdate = time.Now()
+		}
+		if job.job.IsStopping && job.job.assignedTasks == 0 {
+			p.deployment.finalizeRemoveJob(job.job)
 		}
 	}
 
@@ -143,7 +146,7 @@ func (p *Process) ClearTasks() error {
 
 	for _, job := range p.jobs {
 		for _, task := range job.tasks {
-			task.State = TaskStateStopping
+			task.SetState(TaskStateStopping)
 			hadTasks = true
 		}
 	}
@@ -161,7 +164,7 @@ func (p *Process) ClearJobTasks(job string) error {
 	j, ok := p.jobs[job]
 	if ok {
 		for _, task := range j.tasks {
-			task.State = TaskStateStopping
+			task.SetState(TaskStateStopping)
 		}
 
 		if len(j.tasks) > 0 {
@@ -178,7 +181,7 @@ func (p *Process) GetTasks(active bool) []*Task {
 	list := []*Task{}
 	for _, job := range p.jobs {
 		for _, task := range job.tasks {
-			if !active || task.State != TaskStateStopping {
+			if !active || task.GetState() != TaskStateStopping {
 				list = append(list, task)
 			}
 		}
@@ -195,7 +198,7 @@ func (p *Process) GetJobTasksLen(job string, active bool) int {
 			return len(j.tasks)
 		}
 		for _, task := range j.tasks {
-			if task.State != TaskStateStopping {
+			if task.GetState() != TaskStateStopping {
 				total += 1
 			}
 		}
@@ -220,7 +223,7 @@ func (p *Process) GetTask(job string, id int) *Task {
 // add list of tasks to process
 func (p *Process) AddTasks(tasks []*Task) {
 	for _, task := range tasks {
-		task.State = TaskStateAlloc
+		task.SetState(TaskStateAlloc)
 		task.SetProcess(p)
 		task.LastUpdate = time.Now()
 
@@ -241,6 +244,10 @@ func (p *Process) RemoveTask(job string, id int) {
 		for i, task := range j.tasks {
 			if task.Id == id {
 				p.jobs[job].tasks = append(p.jobs[job].tasks[:i], p.jobs[job].tasks[i+1:]...)
+				task.SetProcess(nil)
+				if len(p.jobs[job].tasks) == 0 {
+					delete(p.jobs, job)
+				}
 				return
 			}
 		}
@@ -257,7 +264,7 @@ func (p *Process) StopNTasks(toDelete int) {
 	// TODO Balance stop tasks across jobs (currently will stop all per job & move to next, maybe ok)
 	for _, job := range p.jobs {
 		for _, task := range job.tasks {
-			task.State = TaskStateStopping
+			task.SetState(TaskStateStopping)
 			taskStopped += 1
 			if taskStopped == toDelete {
 				break
@@ -331,7 +338,7 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest, isInit bool)
 				continue
 			}
 
-			task := job.tasks[taskID]
+			task := job.GetTask(taskID)
 
 			// TODO: if task.process = nil, after dealer restart, we need to assign this task to the process
 
@@ -367,30 +374,31 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest, isInit bool)
 			switch msgTask.State {
 			case TaskStateDeleted:
 				if !isInit {
-					task.State = TaskStateUnassigned
+					task.SetState(TaskStateUnassigned)
 					p.RemoveTask(jobName, taskID)
-					task.SetProcess(nil)
 					tasksDeleted = true
+					if job.IsStopping && job.assignedTasks == 0 {
+						p.deployment.finalizeRemoveJob(job)
+					}
 				}
 			case TaskStateStopping:
 				// Tasks are still in Stopping state, so we keep the process in removingTasks state
-				task.State = TaskStateStopping
+				task.SetState(TaskStateStopping)
 				tasksStopping = true
 			case TaskStateCompleted:
-				if task.State != TaskStateCompleted {
+				if task.GetState() != TaskStateCompleted {
 					// if this is the first time we get completion we add the task to completed and save list
 					job.CompletedTasks = append(job.CompletedTasks, taskID)
 					if !job.NeedToSave() {
 						jobsToSave[job.Name] = job
 					}
 				}
-				task.State = msgTask.State
+				task.SetState(TaskStateCompleted)
 				p.RemoveTask(jobName, taskID)
-				task.SetProcess(nil)
 			case TaskStateRunning:
 				// verify its a legal transition (e.g. we didnt ask to stop and got an old update)
-				if isInit || task.State == TaskStateRunning || task.State == TaskStateAlloc {
-					task.State = msgTask.State
+				if isInit || task.GetState() == TaskStateRunning || task.GetState() == TaskStateAlloc {
+					task.SetState(msgTask.State)
 				}
 			default:
 				p.logger.ErrorWith("illegal returned state in task ID", "processor", p.Name, "task", taskID, "job", jobName, "state", msgTask.State)
@@ -437,7 +445,7 @@ func (p *Process) GetProcessState() *ProcessMessage {
 	for jobName, job := range p.jobs {
 		taskList := []TaskMessage{}
 		for _, task := range job.tasks {
-			taskList = append(taskList, TaskMessage{BaseTask: task.BaseTask})
+			taskList = append(taskList, task.ToMessage(false))
 		}
 		msg.Jobs[jobName] = JobShort{TotalTasks: job.job.TotalTasks, Metadata: job.job.Metadata, Tasks: taskList}
 	}
@@ -454,8 +462,8 @@ func (p *Process) emulateProcess() {
 	for jobName, job := range p.jobs {
 		taskList := []TaskMessage{}
 		for _, task := range job.tasks {
-			taskmsg := TaskMessage{BaseTask: task.BaseTask}
-			switch task.State {
+			taskmsg := task.ToMessage(false)
+			switch task.GetState() {
 			case TaskStateStopping:
 				taskmsg.State = TaskStateDeleted
 			default:

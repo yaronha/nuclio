@@ -126,7 +126,7 @@ func (jm *JobManager) Start() error {
 					req.ReturnChan <- &jobs.RespChanType{Err: err, Object: newJob}
 
 				case jobs.RequestTypeJobDel:
-					err := jm.removeJob(req.Name, req.Namespace)
+					err := jm.removeJob(req.Namespace, req.Function, req.Name)
 					req.ReturnChan <- &jobs.RespChanType{Err: err}
 
 				case jobs.RequestTypeJobList:
@@ -229,6 +229,7 @@ func (jm *JobManager) Start() error {
 	return nil
 }
 
+// return a job matching the namespace, function, and job name (job name is unique per ns/function)
 func (jm *JobManager) getJob(namespace, function, name string) (*jobs.JobMessage, error) {
 	list := jm.listJobs(namespace, function, "")
 
@@ -255,12 +256,13 @@ func (jm *JobManager) listJobs(namespace, function, version string) []*jobs.JobM
 	return list
 }
 
-// TODO: add job before/after deployment was created
+// Add a job to an existing function (jobs can also be specified in the function spec)
 func (jm *JobManager) addJob(job *jobs.Job) (*jobs.JobMessage, error) {
 
 	jm.Ctx.Logger.InfoWith("Adding new job", "job", job)
 	dep := jm.DeployMap.FindDeployment(job.Namespace, job.Function, job.Version, true)
 	if dep == nil {
+		// TODO: if function exist (and is asleep) wake-up the function, and queue the job waiting for deployment
 		return nil, fmt.Errorf("Deployment %s %s %s not found, cannot add a job", job.Namespace, job.Function, job.Version)
 	}
 
@@ -278,9 +280,17 @@ func (jm *JobManager) addJob(job *jobs.Job) (*jobs.JobMessage, error) {
 }
 
 // TODO: change to dep jobs
-func (jm *JobManager) removeJob(name, namespace string) error {
+func (jm *JobManager) removeJob(namespace, function, name string) error {
 
 	jm.Ctx.Logger.InfoWith("Removing a job", "name", name, "namespace", namespace)
+	deps := jm.DeployMap.GetAllDeployments(namespace, function, "")
+	for _, dep := range deps {
+		for _, job := range dep.GetJobs() {
+			if job.Name == name {
+				dep.RemoveJob(job, false)
+			}
+		}
+	}
 
 	return nil
 }
@@ -288,13 +298,14 @@ func (jm *JobManager) removeJob(name, namespace string) error {
 // TODO: change to update various runtime job params
 func (jm *JobManager) updateJob(oldJob, newjob *jobs.JobMessage) error {
 
-	// TODO: consider what need to allow in update and habdle it (currently ignored)
+	// TODO: consider what need to allow in update and handle it (currently ignored)
 	// e.g. update MaxAllocation, Job to Version assosiation, Metadata, TotalTasks
 	jm.Ctx.Logger.InfoWith("Update a job", "old", oldJob, "new", newjob)
 
 	return nil
 }
 
+// remove process, triggered by k8s POD delete or API calls
 func (jm *JobManager) removeProcess(name, namespace string) error {
 
 	jm.Ctx.Logger.DebugWith("Removing a process", "name", name, "namespace", namespace)
@@ -318,6 +329,7 @@ func (jm *JobManager) removeProcess(name, namespace string) error {
 	return nil
 }
 
+// update process health, triggered by k8s events
 func (jm *JobManager) processHealth(name, namespace string) error {
 
 	jm.Ctx.Logger.DebugWith("Got heart beat form process", "name", name, "namespace", namespace)
@@ -332,6 +344,7 @@ func (jm *JobManager) processHealth(name, namespace string) error {
 	return nil
 }
 
+// recover process state and tasks during init flow (read current state from processes)
 func (jm *JobManager) InitProcess(procMsg *jobs.ProcessMessage) {
 	key := jobs.ProcessKey(procMsg.Name, procMsg.Namespace)
 	proc, ok := jm.Processes[key]
@@ -385,6 +398,7 @@ func (jm *JobManager) InitProcess(procMsg *jobs.ProcessMessage) {
 	return
 }
 
+// Update process state & tasks, triggered by: k8s updates, api requests, or process responses
 func (jm *JobManager) updateProcess(procMsg *jobs.ProcessMessage, checkTasks bool, isRequest bool) (*jobs.ProcessMessage, error) {
 
 	key := jobs.ProcessKey(procMsg.Name, procMsg.Namespace)

@@ -48,8 +48,10 @@ type Job struct {
 	// Private Job Metadata, will be passed to the processor as is
 	Metadata interface{} `json:"metadata,omitempty"`
 
-	tasks      []*Task
-	isStopping bool
+	tasks         []*Task
+	maxTaskId     int
+	assignedTasks int
+	IsStopping    bool
 }
 
 // Job request and response for the REST API
@@ -89,13 +91,17 @@ func (j *Job) AsString() string {
 	return fmt.Sprintf("%s (%d): {Comp: %d} ", j.Name, j.TotalTasks, j.CompletedTasks)
 }
 
+func (j *Job) GetTask(id int) *Task {
+	return j.tasks[id]
+}
+
 // return Job message with list of job tasks
 func (j *Job) GetJobState() *JobMessage {
 	jobMessage := JobMessage{Job: *j}
 	jobMessage.Tasks = []TaskMessage{}
 
 	for _, task := range j.tasks {
-		jobMessage.Tasks = append(jobMessage.Tasks, task.ToMessage())
+		jobMessage.Tasks = append(jobMessage.Tasks, task.ToMessage(true))
 	}
 	return &jobMessage
 }
@@ -103,13 +109,13 @@ func (j *Job) GetJobState() *JobMessage {
 // find N tasks which are unallocated starting from index
 func (j *Job) findUnallocTask(num int, from *int) []*Task {
 	list := []*Task{}
-	if num <= 0 {
+	if num <= 0 || j.IsStopping {
 		return list
 	}
 
 	for i := *from; i < j.TotalTasks; i++ {
-		if j.tasks[i].State == TaskStateUnassigned {
-			list = append(list, j.tasks[i])
+		if task := j.GetTask(i); task.GetState() == TaskStateUnassigned {
+			list = append(list, task)
 		}
 		*from++
 		if len(list) == num {
@@ -128,12 +134,13 @@ func (j *Job) NeedToSave() bool {
 
 func (j *Job) Stop(procs map[string]*Process) error {
 
-	j.isStopping = true
+	j.IsStopping = true
 
 	for _, proc := range procs {
-		// TODO: report err to logger, need to add context
 		err := proc.ClearJobTasks(j.Name)
-		j.ctx.Logger.ErrorWith("Error when stopping Job - cant clear tasks", "Job", j.Name, "process", proc.Name, "error", err)
+		if err != nil {
+			j.ctx.Logger.ErrorWith("Error when stopping Job - cant clear tasks", "Job", j.Name, "process", proc.Name, "error", err)
+		}
 	}
 
 	return nil
