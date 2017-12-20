@@ -391,6 +391,7 @@ func (d *Deployment) RemoveJob(job *Job, force bool) error {
 }
 
 func (d *Deployment) finalizeRemoveJob(job *Job) error {
+	d.dm.logger.InfoWith("finalize RemoveJob", "function", d.Name, "job", job.Name)
 	delete(d.jobs, job.Name)
 	return nil
 }
