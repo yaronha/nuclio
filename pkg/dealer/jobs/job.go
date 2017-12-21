@@ -95,6 +95,20 @@ func (j *Job) GetTask(id int) *Task {
 	return j.tasks[id]
 }
 
+func (j *Job) InitTask(task *TaskMessage) {
+	id := task.Id
+
+	if task.State == TaskStateCompleted {
+		j.tasks[id].state = TaskStateCompleted
+		return
+	}
+
+	if task.CheckPoint != nil || task.Progress != 0 {
+		j.tasks[id].CheckPoint = task.CheckPoint
+		j.tasks[id].Progress = task.Progress
+	}
+}
+
 // return Job message with list of job tasks
 func (j *Job) GetJobState() *JobMessage {
 	jobMessage := JobMessage{Job: *j}

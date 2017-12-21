@@ -124,7 +124,7 @@ func (jm *JobManager) Start() error {
 
 				case jobs.RequestTypeJobCreate:
 					job := req.Object.(*jobs.Job)
-					newJob, err := jm.AddJob(job)
+					newJob, err := jm.addJob(job)
 					req.ReturnChan <- &jobs.RespChanType{Err: err, Object: newJob}
 
 				case jobs.RequestTypeJobDel:
@@ -259,7 +259,7 @@ func (jm *JobManager) listJobs(namespace, function, version string) []*jobs.JobM
 }
 
 // Add a job to an existing function (jobs can also be specified in the function spec)
-func (jm *JobManager) AddJob(job *jobs.Job) (*jobs.JobMessage, error) {
+func (jm *JobManager) addJob(job *jobs.Job) (*jobs.JobMessage, error) {
 
 	jm.Ctx.Logger.InfoWith("Adding new job", "job", job)
 	dep := jm.DeployMap.FindDeployment(job.Namespace, job.Function, job.Version, true)
@@ -279,6 +279,47 @@ func (jm *JobManager) AddJob(job *jobs.Job) (*jobs.JobMessage, error) {
 	}
 
 	return newJob.GetJobState(), nil
+}
+
+// Add a job to an existing function (jobs can also be specified in the function spec)
+func (jm *JobManager) InitJobs(namespace string) error {
+
+	jobList, err := jm.Ctx.JobStore.ListJobs(namespace)
+	if err != nil {
+		return errors.Wrap(err, "Failed to list jobs")
+	}
+
+	jm.Ctx.Logger.InfoWith("Init jobs from storage", "jobs", len(jobList))
+
+	for _, job := range jobList {
+		dep := jm.DeployMap.FindDeployment(job.Namespace, job.Function, job.Version, true)
+		if dep == nil {
+			// TODO: if function exist (and is asleep) wake-up the function, and queue the job waiting for deployment
+			jm.Ctx.Logger.WarnWith("Deployment not found, cannot init the job", "ns", job.Namespace,
+				"function", job.Function, "ver", job.Version, "job", job.Name)
+			continue
+		}
+
+		newJob, err := jobs.NewJob(jm.Ctx, &job.Job)
+		if err != nil {
+			jm.Ctx.Logger.WarnWith("Failed to create a new job", "ns", job.Namespace,
+				"function", job.Function, "ver", job.Version, "job", job.Name, "err", err)
+			continue
+		}
+
+		for _, taskDef := range job.Tasks {
+			newJob.InitTask(&taskDef)
+		}
+
+		err = dep.AddJob(newJob)
+		if err != nil {
+			jm.Ctx.Logger.WarnWith("Failed to add job to deployment", "ns", job.Namespace,
+				"function", job.Function, "ver", job.Version, "job", job.Name, "err", err)
+			continue
+		}
+	}
+
+	return nil
 }
 
 // TODO: change to dep jobs

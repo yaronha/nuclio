@@ -28,6 +28,10 @@ func (fs *JobFileStore) ListJobs(namespace string) ([]*JobMessage, error) {
 	// TODO: support namespaces
 
 	jobList := []*JobMessage{}
+	if fs.Path == "" {
+		return jobList, nil
+	}
+
 	files, err := ioutil.ReadDir(fs.Path)
 	if err != nil {
 		fs.logger.ErrorWith("cant list Job file dir", "path", fs.Path, "err", err)
@@ -59,6 +63,10 @@ func (fs *JobFileStore) DelJob(namespace, function, name string) error {
 
 func (fs *JobFileStore) SaveJob(job *Job) error {
 
+	if fs.Path == "" {
+		return nil
+	}
+
 	filename := job.Namespace + "_" + job.Function + "_" + job.Name + ".json"
 	file, err := os.OpenFile(
 		path.Join(fs.Path, filename),
@@ -71,8 +79,19 @@ func (fs *JobFileStore) SaveJob(job *Job) error {
 	}
 	defer file.Close()
 
+	jobMessage := JobMessage{Job: *job}
+	jobMessage.Tasks = []TaskMessage{}
+
+	for _, task := range job.tasks {
+		// Store tasks only if they have data to persist (Completion, Checkpoint, Progress)
+		if task.state == TaskStateCompleted || task.CheckPoint != nil || task.Progress != 0 {
+			taskRecord := BaseTask{Id: task.Id, CheckPoint: task.CheckPoint, Progress: task.Progress}
+			jobMessage.Tasks = append(jobMessage.Tasks, TaskMessage{BaseTask: taskRecord, State: task.state})
+		}
+	}
+
 	// Write bytes to file
-	byteSlice, err := json.Marshal(job.GetJobState())
+	byteSlice, err := json.Marshal(jobMessage)
 	if err != nil {
 		fs.logger.ErrorWith("cant Marshal file", "file", filename, "err", err)
 		return err

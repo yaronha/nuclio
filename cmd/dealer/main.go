@@ -76,12 +76,9 @@ func run() error {
 		}
 
 		// TODO: update task state (completed, checkpoints)
-		jobList, err := dealer.Ctx.JobStore.ListJobs("")
-		for _, job := range jobList {
-			_, err = dealer.AddJob(&job.Job)
-			if err != nil {
-				logger.ErrorWith("Failed to add job", "name", job.Name, "err", err)
-			}
+		err = dealer.InitJobs(*namespace)
+		if err != nil {
+			logger.ErrorWith("Did not manage to InitJobs", "err", err)
 		}
 
 		procList, err := kubewatch.ListPods(kubeClient, logger, *namespace)

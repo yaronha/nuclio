@@ -378,6 +378,10 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest, isInit bool)
 					if job.IsStopping && job.assignedTasks == 0 {
 						p.deployment.finalizeRemoveJob(job)
 					}
+					if job.IsStopping && job.assignedTasks != 0 {
+						// wait with re-balance until all Job tasks are removed
+						tasksStopping = true
+					}
 				}
 			case TaskStateStopping:
 				// Tasks are still in Stopping state, so we keep the process in removingTasks state
