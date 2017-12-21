@@ -38,6 +38,7 @@ func run() error {
 	//kubeconf := flag.String("k", "", "Path to a kube config. Only required if out-of-cluster.")
 	namespace := flag.String("n", "", "Namespace")
 	nopush := flag.Bool("np", false, "Disable push updates to process")
+	jpath := flag.String("f", "c:\test", "job files dir")
 	flag.Parse()
 
 	logger, _ := createLogger(*verbose)
@@ -46,6 +47,8 @@ func run() error {
 	if err != nil {
 		return err
 	}
+
+	dealer.Ctx.JobStore = jobs.NewJobFileStore(*jpath, logger)
 
 	var kubeClient *kubernetes.Clientset
 	config, err := kubewatch.GetClientConfig(*kubeconf)
@@ -72,7 +75,14 @@ func run() error {
 			dealer.DeployMap.UpdateDeployment(dep)
 		}
 
-		// TODO: List Jobs & Init
+		// TODO: update task state (completed, checkpoints)
+		jobList, err := dealer.Ctx.JobStore.ListJobs("")
+		for _, job := range jobList {
+			_, err = dealer.AddJob(&job.Job)
+			if err != nil {
+				logger.ErrorWith("Failed to add job", "name", job.Name, "err", err)
+			}
+		}
 
 		procList, err := kubewatch.ListPods(kubeClient, logger, *namespace)
 		if err != nil {

@@ -17,21 +17,21 @@ limitations under the License.
 package portal
 
 import (
-	"github.com/nuclio/nuclio/pkg/dealer/jobs"
-	"github.com/go-chi/render"
 	"fmt"
 	"github.com/go-chi/chi"
-	"net/http"
+	"github.com/go-chi/render"
 	"github.com/nuclio/nuclio-sdk"
+	"github.com/nuclio/nuclio/pkg/dealer/jobs"
+	"net/http"
 )
 
 func NewProcPortal(logger nuclio.Logger, managerCtx *jobs.ManagerContext) (*ProcPortal, error) {
-	newProcPortal := ProcPortal{logger:logger, managerContext:managerCtx}
+	newProcPortal := ProcPortal{logger: logger, managerContext: managerCtx}
 	return &newProcPortal, nil
 }
 
 type ProcPortal struct {
-	logger nuclio.Logger
+	logger         nuclio.Logger
 	managerContext *jobs.ManagerContext
 }
 
@@ -40,9 +40,9 @@ func (pp *ProcPortal) getProcess(w http.ResponseWriter, r *http.Request) {
 	procID := chi.URLParam(r, "procID")
 
 	proc, err := pp.managerContext.SubmitReq(&jobs.RequestMessage{
-		Name:procID, Namespace:namespace, Type:jobs.RequestTypeProcGet})
+		Name: procID, Namespace: namespace, Type: jobs.RequestTypeProcGet})
 
-	if err != nil  {
+	if err != nil {
 		http.Error(w, http.StatusText(422), 422)
 		return
 	}
@@ -58,15 +58,17 @@ func (pp *ProcPortal) deleteProcess(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 	procID := chi.URLParam(r, "procID")
 
+	pp.logger.DebugWith("Got deleteProcess", "process", procID)
+
 	_, err := pp.managerContext.SubmitReq(&jobs.RequestMessage{
-		Name:procID, Namespace:namespace, Type:jobs.RequestTypeProcDel})
+		Name: procID, Namespace: namespace, Type: jobs.RequestTypeProcDel})
 
 	if err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
 		return
 	}
 
-	w.Write([]byte(fmt.Sprintf("Deleted process: %s",procID)))
+	w.Write([]byte(fmt.Sprintf("Deleted process: %s", procID)))
 }
 
 func (pp *ProcPortal) listProcess(w http.ResponseWriter, r *http.Request) {
@@ -74,8 +76,8 @@ func (pp *ProcPortal) listProcess(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 	list := []render.Renderer{}
 
-	procList, err := pp.managerContext.SubmitReq(&jobs.RequestMessage{ Name:"",
-		Namespace:namespace, Type:jobs.RequestTypeProcList})
+	procList, err := pp.managerContext.SubmitReq(&jobs.RequestMessage{Name: "",
+		Namespace: namespace, Type: jobs.RequestTypeProcList})
 
 	if err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
@@ -86,7 +88,7 @@ func (pp *ProcPortal) listProcess(w http.ResponseWriter, r *http.Request) {
 		list = append(list, p)
 	}
 
-	if err := render.RenderList(w, r, list ); err != nil {
+	if err := render.RenderList(w, r, list); err != nil {
 		render.Render(w, r, ErrRender(err))
 		return
 	}
@@ -101,7 +103,7 @@ func (pp *ProcPortal) updateProcess(w http.ResponseWriter, r *http.Request) {
 	}
 
 	proc, err := pp.managerContext.SubmitReq(&jobs.RequestMessage{
-		Object: data, Type:jobs.RequestTypeProcUpdate})
+		Object: data, Type: jobs.RequestTypeProcUpdate})
 
 	if err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
@@ -124,7 +126,7 @@ func (pp *ProcPortal) updateProcessState(w http.ResponseWriter, r *http.Request)
 	}
 
 	_, err := pp.managerContext.SubmitReq(&jobs.RequestMessage{
-		Object:data.BaseProcess, Type:jobs.RequestTypeProcUpdateState})
+		Object: data.BaseProcess, Type: jobs.RequestTypeProcUpdateState})
 
 	if err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
@@ -133,7 +135,3 @@ func (pp *ProcPortal) updateProcessState(w http.ResponseWriter, r *http.Request)
 
 	render.Status(r, http.StatusAccepted)
 }
-
-
-
-

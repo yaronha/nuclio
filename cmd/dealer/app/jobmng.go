@@ -124,7 +124,7 @@ func (jm *JobManager) Start() error {
 
 				case jobs.RequestTypeJobCreate:
 					job := req.Object.(*jobs.Job)
-					newJob, err := jm.addJob(job)
+					newJob, err := jm.AddJob(job)
 					req.ReturnChan <- &jobs.RespChanType{Err: err, Object: newJob}
 
 				case jobs.RequestTypeJobDel:
@@ -259,7 +259,7 @@ func (jm *JobManager) listJobs(namespace, function, version string) []*jobs.JobM
 }
 
 // Add a job to an existing function (jobs can also be specified in the function spec)
-func (jm *JobManager) addJob(job *jobs.Job) (*jobs.JobMessage, error) {
+func (jm *JobManager) AddJob(job *jobs.Job) (*jobs.JobMessage, error) {
 
 	jm.Ctx.Logger.InfoWith("Adding new job", "job", job)
 	dep := jm.DeployMap.FindDeployment(job.Namespace, job.Function, job.Version, true)
@@ -315,7 +315,7 @@ func (jm *JobManager) removeProcess(name, namespace string) error {
 
 	proc, ok := jm.Processes[key]
 	if !ok {
-		jm.Ctx.Logger.ErrorWith("Process not found in removeProcess", "name", name, "namespace", namespace)
+		jm.Ctx.Logger.WarnWith("Process not found in removeProcess", "name", name, "namespace", namespace)
 		return fmt.Errorf("Process %s not found", name)
 	}
 

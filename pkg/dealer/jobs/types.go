@@ -27,6 +27,7 @@ type ManagerContext struct {
 	OutChannel      chan *client.ChanRequest
 	ProcRespChannel chan *client.Response
 	Client          *client.AsyncClient
+	JobStore        JobStore
 	DisablePush     bool
 }
 
@@ -44,8 +45,13 @@ func (mc *ManagerContext) SaveJobs(jobs map[string]*Job) {
 		return
 	}
 
-	mc.Logger.DebugWith("Saving Jobs", "jobs", jobs)
-	// TODO: save jobs state to persistent storage
+	mc.Logger.DebugWith("Saving Jobs", "jobs", len(jobs))
+	for _, job := range jobs {
+		err := mc.JobStore.SaveJob(job)
+		if err != nil {
+			mc.Logger.ErrorWith("Error Saving Job", "jobs", job.Name, "err", err)
+		}
+	}
 }
 
 func (mc *ManagerContext) DeleteJobRecords(jobs map[string]*Job) {

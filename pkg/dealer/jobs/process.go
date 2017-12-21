@@ -262,12 +262,13 @@ func (p *Process) StopNTasks(toDelete int) {
 
 	taskStopped := 0
 	// TODO Balance stop tasks across jobs (currently will stop all per job & move to next, maybe ok)
+loop:
 	for _, job := range p.jobs {
 		for _, task := range job.tasks {
 			task.SetState(TaskStateStopping)
 			taskStopped += 1
 			if taskStopped == toDelete {
-				break
+				break loop
 			}
 		}
 	}
@@ -319,7 +320,6 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest, isInit bool)
 
 	tasksDeleted := false
 	tasksStopping := false
-	hadTaskError := false
 	jobsToSave := map[string]*Job{}
 
 	// Update state of currently allocated tasks
@@ -329,12 +329,10 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest, isInit bool)
 			job, ok := p.deployment.jobs[jobName]
 			if !ok {
 				p.logger.ErrorWith("Task job (name) not found under deployment", "processor", p.Name, "task", taskID, "job", jobName)
-				hadTaskError = true
 				continue
 			}
 			if taskID >= job.TotalTasks {
 				p.logger.ErrorWith("Illegal TaskID, greater than total tasks #", "processor", p.Name, "task", taskID, "job", jobName)
-				hadTaskError = true
 				continue
 			}
 
@@ -346,7 +344,6 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest, isInit bool)
 			if task.process != nil && task.process.Name != p.Name {
 				p.logger.ErrorWith("Task process is mapped to a different process",
 					"processor", p.Name, "task", taskID, "job", jobName, "task-proc", task.process.Name)
-				hadTaskError = true
 				continue
 			}
 
@@ -403,16 +400,11 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest, isInit bool)
 				}
 			default:
 				p.logger.ErrorWith("illegal returned state in task ID", "processor", p.Name, "task", taskID, "job", jobName, "state", msgTask.State)
-				hadTaskError = true
 				continue
 			}
 
 		}
 
-	}
-
-	if hadTaskError {
-		return fmt.Errorf("Error(s) in task processing, check log")
 	}
 
 	// persist critical changes to modified Jobs (had completions or checkpoints)
