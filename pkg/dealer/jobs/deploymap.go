@@ -26,7 +26,7 @@ func (dm *DeploymentMap) NewDeployment(newDeployment *Deployment) *Deployment {
 	return newDeployment
 }
 
-func (dm *DeploymentMap) UpdateDeployment(deployment *Deployment) error {
+func (dm *DeploymentMap) UpdateDeployment(deployment *Deployment) (*Deployment, error) {
 
 	if deployment.Namespace == "" {
 		deployment.Namespace = "default"
@@ -42,12 +42,12 @@ func (dm *DeploymentMap) UpdateDeployment(deployment *Deployment) error {
 		err := dep.updateJobs()
 		if err != nil {
 			dm.logger.ErrorWith("Failed to update jobs in deployment", "deploy", dep.Name, "err", err)
-			return err
+			return nil, err
 		}
 
 		newList := []*Deployment{dep}
 		dm.deployments[key] = newList
-		return nil
+		return dep, nil
 	}
 
 	// look for a specific deployment matching the version number, if found update it
@@ -79,13 +79,13 @@ func (dm *DeploymentMap) UpdateDeployment(deployment *Deployment) error {
 
 				oldValue := dep.ExpectedProc
 				dep.ExpectedProc = deployment.ExpectedProc
-				if dep.ExpectedProc != 0 && dep.ExpectedProc > oldValue {
+				if dep.ExpectedProc != 0 && dep.ExpectedProc > oldValue && len(dep.procs) > 0 {
 					// dont re-balance if we scale-down, wait for processes to stop
 					dep.Rebalance()
 				}
 			}
 
-			return nil
+			return dep, nil
 		}
 	}
 
@@ -94,10 +94,10 @@ func (dm *DeploymentMap) UpdateDeployment(deployment *Deployment) error {
 	err := dep.updateJobs()
 	if err != nil {
 		dm.logger.ErrorWith("Failed to update jobs in deployment", "deploy", dep.Name, "err", err)
-		return err
+		return nil, err
 	}
 	dm.deployments[key] = append(dm.deployments[key], dep)
-	return nil
+	return dep, nil
 }
 
 // return a filtered list of deployments (for portal)

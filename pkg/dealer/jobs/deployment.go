@@ -328,37 +328,32 @@ func (d *Deployment) updateJobs() error {
 
 	d.dm.ctx.SaveJobs(d.jobs)
 
-	// balance tasks across processes (note proc list may still be empty at this point)
-	err := d.Rebalance()
-	if err != nil {
-		d.dm.logger.ErrorWith("Failed to rebalance in updateJobs", "deploy", d.Name, "err", err)
-		return err
+	if len(d.procs) > 0 {
+		err := d.Rebalance()
+		if err != nil {
+			d.dm.logger.ErrorWith("Failed to rebalance in updateJobs", "deploy", d.Name, "err", err)
+			return err
+		}
 	}
-
-	// TODO: remove, just for ref
-	//for _, proc := range d.procs {
-	//	err := d.AllocateTasks(proc)
-	//	if err != nil {
-	//		d.dm.logger.ErrorWith("Failed to allocate jobtasks to proc", "deploy", d.Name, "proc", proc.Name, "err", err)
-	//	}
-	//}
 
 	d.dm.logger.DebugWith("updateDeployJobs", "jobs", d.jobs)
 	return nil
 }
 
 // add job while the deployment is working
-func (d *Deployment) AddJob(rjob *Job) error {
+func (d *Deployment) AddJob(rjob *Job) (*Job, error) {
 
-	_, ok := d.jobs[rjob.Name]
+	var err error
+	job, ok := d.jobs[rjob.Name]
+
 	if !ok {
 		// if this deployment doesnt contain the Job, create and add one
 		newJob := &Job{Name: rjob.Name, Namespace: d.Namespace,
 			Function: d.Function, Version: d.Version,
 			TotalTasks: rjob.TotalTasks, MaxTaskAllocation: rjob.MaxTaskAllocation, Metadata: rjob.Metadata,
 		}
-		job, err := NewJob(d.dm.ctx, newJob)
-		job.postDeployment = true
+		job, err = NewJob(d.dm.ctx, newJob)
+		job.PostDeployment = true
 		job.NeedToSave()
 		if err != nil {
 			d.dm.logger.ErrorWith("Failed to create a job", "deploy", d.Name, "job", rjob.Name, "err", err)
@@ -371,21 +366,25 @@ func (d *Deployment) AddJob(rjob *Job) error {
 		err = d.Rebalance()
 		if err != nil {
 			d.dm.logger.ErrorWith("Failed to rebalance after AddJob", "deploy", d.Name, "job", rjob.Name, "err", err)
-			return err
+			return nil, err
 		}
 	} else {
-		d.dm.logger.WarnWith("Add job to function - Job already exist", "function", d.Name, "job", rjob.Name)
-		return nil
+		d.dm.logger.InfoWith("Add job to function - Job already exist", "function", d.Name, "job", rjob.Name)
 	}
 
-	return nil
+	return job, nil
 }
 
 // remove job while the deployment is working
 func (d *Deployment) RemoveJob(job *Job, force bool) error {
 
+	if !job.PostDeployment {
+		d.dm.logger.WarnWith("Cannot remove jobs that originate in the function spec", "function", d.Name, "job", job.Name)
+		return nil
+	}
+
 	if job.IsStopping {
-		d.dm.logger.WarnWith("RemoveJob - Job already stopping", "function", d.Name, "job", job.Name)
+		d.dm.logger.WarnWith("RemoveJob - ignored, job already stopping", "function", d.Name, "job", job.Name)
 		return nil
 	}
 

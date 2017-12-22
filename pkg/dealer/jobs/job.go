@@ -38,7 +38,7 @@ type Job struct {
 	// Maximum Job tasks executed per processor at a given time
 	MaxTaskAllocation int `json:"maxTaskAllocation,omitempty"`
 	// the Job was created after the deployment (function) creation, i.e. submitted directly to the dealer
-	postDeployment bool
+	PostDeployment bool `json:"postDeployment,omitempty"`
 	// List of completed tasks
 	CompletedTasks []int `json:"completedTasks,omitempty"`
 	// Job can spawn multiple versions (e.g. Canary Deployment)

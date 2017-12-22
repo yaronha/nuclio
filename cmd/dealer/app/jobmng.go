@@ -200,7 +200,7 @@ func (jm *JobManager) Start() error {
 
 				case jobs.RequestTypeDeployUpdate:
 					dep := req.Object.(*jobs.Deployment)
-					err := jm.DeployMap.UpdateDeployment(dep)
+					dep, err := jm.DeployMap.UpdateDeployment(dep)
 					if req.ReturnChan != nil {
 						req.ReturnChan <- &jobs.RespChanType{
 							Err: err, Object: dep.GetDeploymentState()}
@@ -268,12 +268,7 @@ func (jm *JobManager) addJob(job *jobs.Job) (*jobs.JobMessage, error) {
 		return nil, fmt.Errorf("Deployment %s %s %s not found, cannot add a job", job.Namespace, job.Function, job.Version)
 	}
 
-	newJob, err := jobs.NewJob(jm.Ctx, job)
-	if err != nil {
-		return nil, errors.Wrap(err, "Failed to create a new job")
-	}
-
-	err = dep.AddJob(newJob)
+	newJob, err := dep.AddJob(job)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to add job to deployment")
 	}
@@ -300,9 +295,9 @@ func (jm *JobManager) InitJobs(namespace string) error {
 			continue
 		}
 
-		newJob, err := jobs.NewJob(jm.Ctx, &job.Job)
+		newJob, err := dep.AddJob(&job.Job)
 		if err != nil {
-			jm.Ctx.Logger.WarnWith("Failed to create a new job", "ns", job.Namespace,
+			jm.Ctx.Logger.WarnWith("Failed to add job to deployment", "ns", job.Namespace,
 				"function", job.Function, "ver", job.Version, "job", job.Name, "err", err)
 			continue
 		}
@@ -311,12 +306,6 @@ func (jm *JobManager) InitJobs(namespace string) error {
 			newJob.InitTask(&taskDef)
 		}
 
-		err = dep.AddJob(newJob)
-		if err != nil {
-			jm.Ctx.Logger.WarnWith("Failed to add job to deployment", "ns", job.Namespace,
-				"function", job.Function, "ver", job.Version, "job", job.Name, "err", err)
-			continue
-		}
 	}
 
 	return nil
@@ -388,57 +377,75 @@ func (jm *JobManager) processHealth(name, namespace string) error {
 }
 
 // recover process state and tasks during init flow (read current state from processes)
-func (jm *JobManager) InitProcess(procMsg *jobs.ProcessMessage) {
-	key := jobs.ProcessKey(procMsg.Name, procMsg.Namespace)
-	proc, ok := jm.Processes[key]
+func (jm *JobManager) InitProcesses(procList []*jobs.BaseProcess) {
 
-	if ok || procMsg.State != jobs.ProcessStateReady || procMsg.IP == "" {
-		jm.Ctx.Logger.DebugWith("process init, ignore process", "exist", ok, "process", procMsg)
-		return
+	for _, proc := range procList {
+		jm.Ctx.Logger.DebugWith("Init Process", "proc", proc)
+
+		procMsg := &jobs.ProcessMessage{BaseProcess: *proc}
+
+		key := jobs.ProcessKey(procMsg.Name, procMsg.Namespace)
+		proc, ok := jm.Processes[key]
+
+		if ok || procMsg.State != jobs.ProcessStateReady || procMsg.IP == "" {
+			jm.Ctx.Logger.DebugWith("process init, ignore process", "exist", ok, "process", procMsg)
+			continue
+		}
+
+		jm.Ctx.Logger.InfoWith("Adding new process in init", "process", procMsg)
+
+		dep := jm.DeployMap.FindDeployment(procMsg.Namespace, procMsg.Function, procMsg.Version, false)
+		if dep == nil {
+			// if no deployment than it is likely a new process (no need to restore)
+			jm.Ctx.Logger.DebugWith("Deployment wasnt found in process init",
+				"namespace", procMsg.Namespace, "function", procMsg.Function, "version", procMsg.Version)
+			continue
+		}
+
+		// TODO: do HTTP Gets in Go routines (i.e. split the function & use Chan), err handling
+		host := fmt.Sprintf("http://%s:%d", procMsg.IP, jobs.DEFAULT_PORT)
+		resp, err := http.Get(host)
+		if err != nil {
+			jm.Ctx.Logger.ErrorWith("process init, Failed get state", "host", host, "err", err)
+			continue
+		}
+
+		body, _ := ioutil.ReadAll(resp.Body)
+		jm.Ctx.Logger.DebugWith("process init, got data", "host", host, "body", string(body))
+		procResp := &jobs.ProcessMessage{}
+		err = json.Unmarshal(body, procResp)
+		if err != nil {
+			jm.Ctx.Logger.ErrorWith("Failed to Unmarshal process resp", "body", string(body), "err", err)
+			continue
+		}
+
+		proc, err = jobs.NewProcess(jm.Ctx.Logger, jm.Ctx, procResp)
+		if err != nil {
+			jm.Ctx.Logger.ErrorWith("Failed to init NewProcess", "deploy", dep.Name, "proc", proc.Name, "err", err)
+			continue
+		}
+
+		jm.Processes[key] = proc
+		dep.AddProcess(proc)
+
+		err = proc.HandleTaskUpdates(procResp, false, true)
+		if err != nil {
+			jm.Ctx.Logger.ErrorWith("Failed to init process, HandleTaskUpdates", "deploy", dep.Name, "proc", proc.Name, "err", err)
+		}
+
+	}
+}
+
+func (jm *JobManager) RebalanceNewDeps(newDepList []*jobs.Deployment) {
+
+	jm.Ctx.Logger.DebugWith("Rebalance deployments", "deployments", len(newDepList))
+	for _, dep := range newDepList {
+		err := dep.Rebalance()
+		if err != nil {
+			jm.Ctx.Logger.ErrorWith("Failed to rebalance new deployment", "deploy", dep.Name, "err", err)
+		}
 	}
 
-	jm.Ctx.Logger.InfoWith("Adding new process in init", "process", procMsg)
-
-	dep := jm.DeployMap.FindDeployment(procMsg.Namespace, procMsg.Function, procMsg.Version, false)
-	if dep == nil {
-		// if no deployment than it is likely a new process (no need to restore)
-		jm.Ctx.Logger.DebugWith("Deployment wasnt found in process init",
-			"namespace", procMsg.Namespace, "function", procMsg.Function, "version", procMsg.Version)
-		return
-	}
-
-	// TODO: do HTTP Gets in Go routines (i.e. split the function & use Chan), err handling
-	host := fmt.Sprintf("http://%s:%d", procMsg.IP, jobs.DEFAULT_PORT)
-	resp, err := http.Get(host)
-	if err != nil {
-		jm.Ctx.Logger.ErrorWith("process init, Failed get state", "host", host, "err", err)
-		return
-	}
-
-	body, _ := ioutil.ReadAll(resp.Body)
-	jm.Ctx.Logger.DebugWith("process init, got data", "host", host, "body", string(body))
-	procResp := &jobs.ProcessMessage{}
-	err = json.Unmarshal(body, procResp)
-	if err != nil {
-		jm.Ctx.Logger.ErrorWith("Failed to Unmarshal process resp", "body", string(body), "err", err)
-		return
-	}
-
-	proc, err = jobs.NewProcess(jm.Ctx.Logger, jm.Ctx, procResp)
-	if err != nil {
-		jm.Ctx.Logger.ErrorWith("Failed to init NewProcess", "deploy", dep.Name, "proc", proc.Name, "err", err)
-		return
-	}
-
-	jm.Processes[key] = proc
-	dep.AddProcess(proc)
-
-	err = proc.HandleTaskUpdates(procResp, false, true)
-	if err != nil {
-		jm.Ctx.Logger.ErrorWith("Failed to init process, HandleTaskUpdates", "deploy", dep.Name, "proc", proc.Name, "err", err)
-	}
-
-	return
 }
 
 // Update process state & tasks, triggered by: k8s updates, api requests, or process responses

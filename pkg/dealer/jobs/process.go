@@ -320,6 +320,7 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest, isInit bool)
 
 	tasksDeleted := false
 	tasksStopping := false
+	forceRebalance := false
 	jobsToSave := map[string]*Job{}
 
 	// Update state of currently allocated tasks
@@ -375,12 +376,14 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest, isInit bool)
 					task.SetState(TaskStateUnassigned)
 					p.RemoveTask(jobName, taskID)
 					tasksDeleted = true
-					if job.IsStopping && job.assignedTasks == 0 {
-						p.deployment.finalizeRemoveJob(job)
-					}
 					if job.IsStopping && job.assignedTasks != 0 {
 						// wait with re-balance until all Job tasks are removed
 						tasksStopping = true
+					}
+					if job.IsStopping && job.assignedTasks == 0 {
+						p.deployment.finalizeRemoveJob(job)
+						forceRebalance = true
+
 					}
 				}
 			case TaskStateStopping:
@@ -424,7 +427,8 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest, isInit bool)
 	}
 
 	// if some tasks deleted (returned to pool) rebalance
-	if tasksDeleted && !tasksStopping {
+	p.logger.DebugWith("HandleTaskUpdates", "processor", p.Name, "forceRebalance", forceRebalance, "tasksDeleted", tasksDeleted, "tasksStopping", tasksStopping)
+	if forceRebalance || (tasksDeleted && !tasksStopping) {
 		p.removingTasks = true
 		p.deployment.Rebalance() //TODO: verify no circular dep
 		p.removingTasks = false

@@ -70,12 +70,15 @@ func run() error {
 			return err
 		}
 
+		newDepList := []*jobs.Deployment{}
 		for _, dep := range depList {
 			logger.DebugWith("Init, UpdateDeployment", "deploy", dep)
-			dealer.DeployMap.UpdateDeployment(dep)
+			newDep, err := dealer.DeployMap.UpdateDeployment(dep)
+			if err == nil {
+				newDepList = append(newDepList, newDep)
+			}
 		}
 
-		// TODO: update task state (completed, checkpoints)
 		err = dealer.InitJobs(*namespace)
 		if err != nil {
 			logger.ErrorWith("Did not manage to InitJobs", "err", err)
@@ -83,13 +86,10 @@ func run() error {
 
 		procList, err := kubewatch.ListPods(kubeClient, logger, *namespace)
 		if err != nil {
-			return err
+			logger.ErrorWith("Did not manage to ListPods", "err", err)
 		}
-
-		for _, proc := range procList {
-			logger.DebugWith("Init Process", "proc", proc)
-			dealer.InitProcess(&jobs.ProcessMessage{BaseProcess: *proc})
-		}
+		dealer.InitProcesses(procList)
+		dealer.RebalanceNewDeps(newDepList)
 	}
 
 	dealer.Ctx.DisablePush = *nopush
