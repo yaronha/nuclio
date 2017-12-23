@@ -22,6 +22,19 @@ import (
 	"time"
 )
 
+type JobState int8
+
+const (
+	JobStateUnassigned JobState = 0
+	JobStateRunning    JobState = 1 // distributed to processes
+	JobStateStopping   JobState = 2 // asking the processes to stop/free job task
+	JobStateSuspended  JobState = 3 // user requested to suspend the job
+	JobStateWaitForDep JobState = 4 // Job is waiting for the deployment to start
+	JobStateScheduled  JobState = 4 // Job is scheduled for deployment
+	JobStateCompleted  JobState = 5 // Job processing completed
+	JobStateDelete     JobState = 6 // Job processing completed
+)
+
 type Job struct {
 	ctx  *ManagerContext
 	Name string `json:"name"`
@@ -47,17 +60,22 @@ type Job struct {
 	markedDirty bool
 	// Private Job Metadata, will be passed to the processor as is
 	Metadata interface{} `json:"metadata,omitempty"`
+	// Job state
+	state        JobState
+	desiredState JobState
 
 	tasks         []*Task
 	maxTaskId     int
 	assignedTasks int
 	IsStopping    bool
+	postStop      *AsyncWorkflowTask
 }
 
 // Job request and response for the REST API
 type JobMessage struct {
 	Job
-	Tasks []TaskMessage `json:"tasks"`
+	DesiredState JobState
+	Tasks        []TaskMessage `json:"tasks"`
 }
 
 func (j *JobMessage) Bind(r *http.Request) error {
@@ -95,6 +113,25 @@ func (j *Job) GetTask(id int) *Task {
 	return j.tasks[id]
 }
 
+func (j *Job) GetState() JobState {
+	return j.state
+}
+
+func (j *Job) GetDesiredState() JobState {
+	return j.desiredState
+}
+
+func (j *Job) UpdateCurrentState(state JobState) {
+	if state == JobStateSuspended && j.postStop != nil {
+		j.postStop.Complete(nil, nil)
+	}
+	j.state = state
+}
+
+func (j *Job) ChangeState(state JobState) {
+	j.desiredState = state
+}
+
 func (j *Job) InitTask(task *TaskMessage) {
 	id := task.Id
 
@@ -113,6 +150,7 @@ func (j *Job) InitTask(task *TaskMessage) {
 func (j *Job) GetJobState() *JobMessage {
 	jobMessage := JobMessage{Job: *j}
 	jobMessage.Tasks = []TaskMessage{}
+	jobMessage.DesiredState = j.desiredState
 
 	for _, task := range j.tasks {
 		jobMessage.Tasks = append(jobMessage.Tasks, task.ToMessage(true))
@@ -144,18 +182,4 @@ func (j *Job) NeedToSave() bool {
 	val := j.markedDirty
 	j.markedDirty = true
 	return val
-}
-
-func (j *Job) Stop(procs map[string]*Process) error {
-
-	j.IsStopping = true
-
-	for _, proc := range procs {
-		err := proc.ClearJobTasks(j.Name)
-		if err != nil {
-			j.ctx.Logger.ErrorWith("Error when stopping Job - cant clear tasks", "Job", j.Name, "process", proc.Name, "error", err)
-		}
-	}
-
-	return nil
 }

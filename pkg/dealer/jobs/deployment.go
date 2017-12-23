@@ -42,6 +42,7 @@ type Trigger struct {
 	MaxProcesses      int         `json:"maxProcesses,omitempty"`
 	Metadata          interface{} `json:"metadata,omitempty"`
 	IsMultiVersion    bool        `json:"isMultiVersion,omitempty"`
+	Disabled          bool        `json:"disabled,omitempty"`
 }
 
 func (d *Deployment) AddProcess(proc *Process) {
@@ -92,9 +93,19 @@ func (d *Deployment) GetDeploymentState() *DeploymentMessage {
 
 }
 
+func (d *Deployment) GetActiveJobs() []*Job {
+	activeJobs := []*Job{}
+	for _, job := range d.jobs {
+		if job.desiredState == JobStateRunning {
+			activeJobs = append(activeJobs, job)
+		}
+	}
+	return activeJobs
+}
+
 func (d *Deployment) SumTasks() int {
 	tasks := 0
-	for _, job := range d.jobs {
+	for _, job := range d.GetActiveJobs() {
 		tasks += job.TotalTasks
 	}
 	return tasks
@@ -246,7 +257,7 @@ func (d *Deployment) addTasks2Proc(proc *Process, toAdd, totalTasks int) (int, e
 	added := 0
 
 	// First pass, give each job more tasks based on its share
-	for _, j := range d.jobs {
+	for _, j := range d.GetActiveJobs() {
 		rec := jobRec{job: j}
 		share := int(float64(toAdd*j.TotalTasks)/float64(totalTasks) + 0.5)
 		maxAllocated := false
@@ -309,8 +320,12 @@ func (d *Deployment) updateJobs() error {
 		_, ok := d.jobs[rjob.Name]
 		if !ok {
 			// if this deployment doesnt contain the Job, create and add one
+			desiredState := JobStateRunning
+			if rjob.Disabled {
+				desiredState = JobStateSuspended
+			}
 			newJob := &Job{Name: rjob.Name, Namespace: d.Namespace,
-				Function: d.Function, Version: d.Version,
+				Function: d.Function, Version: d.Version, desiredState: desiredState,
 				TotalTasks: rjob.TotalTasks, MaxTaskAllocation: rjob.MaxTaskAllocation, Metadata: rjob.Metadata,
 			}
 			job, err := NewJob(d.dm.ctx, newJob)
@@ -323,6 +338,8 @@ func (d *Deployment) updateJobs() error {
 			d.jobs[rjob.Name] = job
 			d.dm.logger.DebugWith("Added new job to function", "function", d.Name, "job", rjob.Name, "tasks", rjob.TotalTasks)
 		}
+
+		//TODO: handle state transitions (enabled/disabled/removal/add)
 
 	}
 
@@ -341,14 +358,18 @@ func (d *Deployment) updateJobs() error {
 }
 
 // add job while the deployment is working
-func (d *Deployment) AddJob(rjob *Job) (*Job, error) {
+func (d *Deployment) AddJob(rjob *Job, desiredState JobState) (*Job, error) {
 
 	var err error
+	if desiredState == JobStateUnassigned {
+		desiredState = JobStateRunning
+	}
+
 	job, ok := d.jobs[rjob.Name]
 
 	if !ok {
 		// if this deployment doesnt contain the Job, create and add one
-		newJob := &Job{Name: rjob.Name, Namespace: d.Namespace,
+		newJob := &Job{Name: rjob.Name, Namespace: d.Namespace, desiredState: desiredState,
 			Function: d.Function, Version: d.Version,
 			TotalTasks: rjob.TotalTasks, MaxTaskAllocation: rjob.MaxTaskAllocation, Metadata: rjob.Metadata,
 		}
@@ -370,6 +391,7 @@ func (d *Deployment) AddJob(rjob *Job) (*Job, error) {
 		}
 	} else {
 		d.dm.logger.InfoWith("Add job to function - Job already exist", "function", d.Name, "job", rjob.Name)
+		job.ChangeState(desiredState)
 	}
 
 	return job, nil
@@ -383,21 +405,43 @@ func (d *Deployment) RemoveJob(job *Job, force bool) error {
 		return nil
 	}
 
-	if job.IsStopping {
-		d.dm.logger.WarnWith("RemoveJob - ignored, job already stopping", "function", d.Name, "job", job.Name)
+	if job.desiredState == JobStateDelete {
+		d.dm.logger.WarnWith("RemoveJob - ignored, already removing job", "function", d.Name, "job", job.Name)
 		return nil
 	}
 
-	job.Stop(d.procs)
-	if job.assignedTasks == 0 {
-		d.finalizeRemoveJob(job)
-	}
-	return nil
-}
+	job.IsStopping = true
+	job.ChangeState(JobStateDelete)
+	job.UpdateCurrentState(JobStateStopping) // TODO: part of change state
 
-func (d *Deployment) finalizeRemoveJob(job *Job) error {
-	d.dm.logger.InfoWith("finalize RemoveJob", "function", d.Name, "job", job.Name)
-	delete(d.jobs, job.Name)
+	if job.GetState() == JobStateRunning && job.assignedTasks > 0 {
+
+		wt := d.dm.ctx.NewWorkflowTask(AsyncWorkflowTask{
+			Name:       "RemoveJob",
+			TimeoutSec: 60,
+			OnComplete: func(awt *AsyncWorkflowTask) {
+				d.dm.logger.InfoWith("finalize RemoveJob", "function", d.Name, "job", job.Name)
+				delete(d.jobs, job.Name)
+			},
+			OnTimeout: func(awt *AsyncWorkflowTask) {
+				d.dm.logger.ErrorWith("timeout on RemoveJob", "function", d.Name, "job", job.Name)
+			},
+		})
+		job.postStop = wt
+		wt.Start()
+
+		for _, proc := range d.procs {
+			err := proc.ClearJobTasks(job.Name)
+			if err != nil {
+				d.dm.logger.ErrorWith("Error when stopping Job - cant clear tasks", "Job", job.Name, "process", proc.Name, "error", err)
+			}
+		}
+	}
+
+	if job.assignedTasks == 0 {
+		d.dm.logger.InfoWith("finalize RemoveJob", "function", d.Name, "job", job.Name)
+		delete(d.jobs, job.Name)
+	}
 	return nil
 }
 

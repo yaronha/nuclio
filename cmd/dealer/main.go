@@ -32,23 +32,23 @@ import (
 )
 
 func run() error {
-	configPath := flag.String("config", "", "Path of configuration file")
 	verbose := flag.Bool("d", true, "Verbose")
-	kubeconf := flag.String("k", "config", "Path to a kube config. Only required if out-of-cluster.")
-	//kubeconf := flag.String("k", "", "Path to a kube config. Only required if out-of-cluster.")
+	//kubeconf := flag.String("k", "config", "Path to a kube config. Only required if out-of-cluster.")
+	kubeconf := flag.String("k", "", "Path to a kube config. Only required if out-of-cluster.")
 	namespace := flag.String("n", "", "Namespace")
 	nopush := flag.Bool("np", false, "Disable push updates to process")
-	jpath := flag.String("f", "c:\test", "job files dir")
+	spath := flag.String("f", "c:\test", "job files dir")
 	flag.Parse()
 
 	logger, _ := createLogger(*verbose)
 
-	dealer, err := app.NewJobManager(*configPath, logger)
+	dealer, err := app.NewJobManager(logger, &jobs.ManagerContextConfig{
+		DisablePush: *nopush,
+		StorePath:   *spath,
+	})
 	if err != nil {
 		return err
 	}
-
-	dealer.Ctx.JobStore = jobs.NewJobFileStore(*jpath, logger)
 
 	var kubeClient *kubernetes.Clientset
 	config, err := kubewatch.GetClientConfig(*kubeconf)
@@ -92,7 +92,6 @@ func run() error {
 		dealer.RebalanceNewDeps(newDepList)
 	}
 
-	dealer.Ctx.DisablePush = *nopush
 	err = dealer.Start()
 	if err != nil {
 		return err

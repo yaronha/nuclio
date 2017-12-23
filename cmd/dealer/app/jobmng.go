@@ -31,7 +31,7 @@ import (
 
 const NUM_WEB_CLIENTS = 4
 
-func NewJobManager(config string, logger nuclio.Logger) (*JobManager, error) {
+func NewJobManager(logger nuclio.Logger, config *jobs.ManagerContextConfig) (*JobManager, error) {
 	newManager := JobManager{}
 	newManager.Processes = make(map[string]*jobs.Process)
 	newManager.verbose = true // TODO: from config
@@ -42,20 +42,8 @@ func NewJobManager(config string, logger nuclio.Logger) (*JobManager, error) {
 		return &newManager, err
 	}
 
-	procRespChannel := make(chan *client.Response, 100)
-	newManager.Ctx = &jobs.ManagerContext{ProcRespChannel: procRespChannel,
-		Client: newManager.asyncClient, //RequestsChannel:reqChan,
-	}
-
-	// TODO: fixme
-	reqChan := make(chan *jobs.RequestMessage, 100)
-	newManager.RequestsChannel = reqChan
-
-	reqChan2 := make(chan *jobs.RequestMessage, 100)
-	newManager.Ctx.RequestsChannel = reqChan2
+	newManager.Ctx = jobs.NewManagerContext(logger, newManager.asyncClient, config)
 	newManager.DeployMap, _ = jobs.NewDeploymentMap(logger, newManager.Ctx)
-
-	newManager.Ctx.Logger = logger.GetChild("jobMng").(nuclio.Logger)
 
 	return &newManager, nil
 }
@@ -68,15 +56,6 @@ type JobManager struct {
 	Processes       map[string]*jobs.Process
 	DeployMap       *jobs.DeploymentMap
 	asyncClient     *client.AsyncClient
-}
-
-func (jm *JobManager) SubmitReq(request *jobs.RequestMessage) (interface{}, error) {
-	respChan := make(chan *jobs.RespChanType)
-	request.ReturnChan = respChan
-	jm.Ctx.RequestsChannel <- request
-	resp := <-respChan
-	return resp.Object, resp.Err
-	return nil, nil
 }
 
 func (jm *JobManager) Start() error {
@@ -115,6 +94,14 @@ func (jm *JobManager) Start() error {
 					jm.Ctx.Logger.ErrorWith("Failed to update process resp", "body", string(resp.Body()), "err", err)
 				}
 
+			case asyncTask := <-jm.Ctx.AsyncTasksChannel:
+				jm.Ctx.Logger.DebugWith("Got asyncTask", "name", asyncTask.Name, "timeout", asyncTask.IsTimeout())
+				if asyncTask.IsTimeout() {
+					asyncTask.OnTimeout(asyncTask)
+				} else {
+					asyncTask.OnComplete(asyncTask)
+				}
+
 			case req := <-jm.Ctx.RequestsChannel:
 				//jm.Ctx.Logger.DebugWith("Got chan request", "type", req.Type, "name", req.Name, "namespace", req.Namespace)
 				switch req.Type {
@@ -123,7 +110,7 @@ func (jm *JobManager) Start() error {
 					req.ReturnChan <- &jobs.RespChanType{Err: err, Object: job}
 
 				case jobs.RequestTypeJobCreate:
-					job := req.Object.(*jobs.Job)
+					job := req.Object.(*jobs.JobMessage)
 					newJob, err := jm.addJob(job)
 					req.ReturnChan <- &jobs.RespChanType{Err: err, Object: newJob}
 
@@ -259,7 +246,7 @@ func (jm *JobManager) listJobs(namespace, function, version string) []*jobs.JobM
 }
 
 // Add a job to an existing function (jobs can also be specified in the function spec)
-func (jm *JobManager) addJob(job *jobs.Job) (*jobs.JobMessage, error) {
+func (jm *JobManager) addJob(job *jobs.JobMessage) (*jobs.JobMessage, error) {
 
 	jm.Ctx.Logger.InfoWith("Adding new job", "job", job)
 	dep := jm.DeployMap.FindDeployment(job.Namespace, job.Function, job.Version, true)
@@ -268,7 +255,7 @@ func (jm *JobManager) addJob(job *jobs.Job) (*jobs.JobMessage, error) {
 		return nil, fmt.Errorf("Deployment %s %s %s not found, cannot add a job", job.Namespace, job.Function, job.Version)
 	}
 
-	newJob, err := dep.AddJob(job)
+	newJob, err := dep.AddJob(&job.Job, job.DesiredState)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to add job to deployment")
 	}
@@ -295,7 +282,7 @@ func (jm *JobManager) InitJobs(namespace string) error {
 			continue
 		}
 
-		newJob, err := dep.AddJob(&job.Job)
+		newJob, err := dep.AddJob(&job.Job, job.DesiredState)
 		if err != nil {
 			jm.Ctx.Logger.WarnWith("Failed to add job to deployment", "ns", job.Namespace,
 				"function", job.Function, "ver", job.Version, "job", job.Name, "err", err)
