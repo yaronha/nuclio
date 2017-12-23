@@ -301,16 +301,18 @@ func (jm *JobManager) InitJobs(namespace string) error {
 // TODO: change to dep jobs
 func (jm *JobManager) removeJob(namespace, function, name string) error {
 
-	jm.Ctx.Logger.InfoWith("Removing a job", "name", name, "namespace", namespace)
+	jm.Ctx.Logger.InfoWith("Removing a job", "name", name, "namespace", namespace, "function", function)
 	deps := jm.DeployMap.GetAllDeployments(namespace, function, "")
 	for _, dep := range deps {
 		for _, job := range dep.GetJobs() {
 			if job.Name == name {
 				dep.RemoveJob(job, false)
+				return
 			}
 		}
 	}
 
+	jm.Ctx.Logger.WarnWith("Removing a job, job not found", "name", name, "namespace", namespace)
 	return nil
 }
 

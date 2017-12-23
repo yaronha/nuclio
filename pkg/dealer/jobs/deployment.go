@@ -413,9 +413,11 @@ func (d *Deployment) RemoveJob(job *Job, force bool) error {
 	job.IsStopping = true
 	job.ChangeState(JobStateDelete)
 	job.UpdateCurrentState(JobStateStopping) // TODO: part of change state
+	d.dm.logger.DebugWith("RemoveJob", "function", d.Name, "job", job.Name, "tasks", job.assignedTasks, "state", job.GetState())
 
 	if job.GetState() == JobStateRunning && job.assignedTasks > 0 {
 
+		d.dm.logger.DebugWith("RemoveJob - pre async", "function", d.Name, "job", job.Name)
 		wt := d.dm.ctx.NewWorkflowTask(AsyncWorkflowTask{
 			Name:       "RemoveJob",
 			TimeoutSec: 60,
@@ -429,6 +431,7 @@ func (d *Deployment) RemoveJob(job *Job, force bool) error {
 		})
 		job.postStop = wt
 		wt.Start()
+		d.dm.logger.DebugWith("RemoveJob - async started", "function", d.Name, "job", job.Name)
 
 		for _, proc := range d.procs {
 			err := proc.ClearJobTasks(job.Name)
