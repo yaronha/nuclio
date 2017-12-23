@@ -102,7 +102,7 @@ func (jp *JobsPortal) createJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_, err := jp.managerContext.SubmitReq(&jobs.RequestMessage{
-		Object: &data, Type: jobs.RequestTypeJobCreate})
+		Object: data, Type: jobs.RequestTypeJobCreate})
 
 	if err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
