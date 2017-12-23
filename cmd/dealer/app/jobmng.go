@@ -307,7 +307,7 @@ func (jm *JobManager) removeJob(namespace, function, name string) error {
 		for _, job := range dep.GetJobs() {
 			if job.Name == name {
 				dep.RemoveJob(job, false)
-				return
+				return nil
 			}
 		}
 	}
