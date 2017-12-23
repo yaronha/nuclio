@@ -42,7 +42,7 @@ func NewManagerContext(logger nuclio.Logger, asyncClient *client.AsyncClient, co
 		Logger:            logger.GetChild("jobMng").(nuclio.Logger),
 		RequestsChannel:   make(chan *RequestMessage, 100),
 		ProcRespChannel:   make(chan *client.Response, 100),
-		AsyncTasksChannel: make(chan *AsyncWorkflowTask),
+		AsyncTasksChannel: make(chan *AsyncWorkflowTask, 100),
 		Client:            asyncClient,
 		DisablePush:       config.DisablePush,
 	}
