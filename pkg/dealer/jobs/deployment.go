@@ -412,16 +412,17 @@ func (d *Deployment) RemoveJob(job *Job, force bool) error {
 
 	job.IsStopping = true
 	job.ChangeState(JobStateDelete)
-	job.UpdateCurrentState(JobStateStopping) // TODO: part of change state
 	d.dm.logger.DebugWith("RemoveJob", "function", d.Name, "job", job.Name, "tasks", job.assignedTasks, "state", job.GetState())
 
 	if job.GetState() == JobStateRunning && job.assignedTasks > 0 {
 
+		job.UpdateCurrentState(JobStateStopping) // TODO: part of change state
 		d.dm.logger.DebugWith("RemoveJob - pre async", "function", d.Name, "job", job.Name)
 		wt := d.dm.ctx.NewWorkflowTask(AsyncWorkflowTask{
 			Name:       "RemoveJob",
 			TimeoutSec: 60,
 			OnComplete: func(awt *AsyncWorkflowTask) {
+				// TODO: verify job still exist
 				d.dm.logger.InfoWith("finalize RemoveJob", "function", d.Name, "job", job.Name)
 				delete(d.jobs, job.Name)
 			},
@@ -445,6 +446,7 @@ func (d *Deployment) RemoveJob(job *Job, force bool) error {
 		d.dm.logger.InfoWith("finalize RemoveJob", "function", d.Name, "job", job.Name)
 		delete(d.jobs, job.Name)
 	}
+
 	return nil
 }
 
