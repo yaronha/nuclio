@@ -369,7 +369,8 @@ func (d *Deployment) AddJob(rjob *Job, desiredState JobState) (*Job, error) {
 
 	if !ok {
 		// if this deployment doesnt contain the Job, create and add one
-		newJob := &Job{Name: rjob.Name, Namespace: d.Namespace, desiredState: desiredState,
+		// TODO: seperate desired/current state
+		newJob := &Job{Name: rjob.Name, Namespace: d.Namespace, desiredState: desiredState, state: desiredState,
 			Function: d.Function, Version: d.Version,
 			TotalTasks: rjob.TotalTasks, MaxTaskAllocation: rjob.MaxTaskAllocation, Metadata: rjob.Metadata,
 		}
