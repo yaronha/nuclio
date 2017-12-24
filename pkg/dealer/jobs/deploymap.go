@@ -88,6 +88,7 @@ func (dm *DeploymentMap) UpdateDeployment(newDep *DeploymentSpec) (*Deployment, 
 
 			// TODO: if function gen changed updateJobs, handle removed
 			if newDep.FuncGen != "" && dep.FuncGen != newDep.FuncGen {
+				dep.FuncGen = newDep.FuncGen
 
 				// Identify if jobs were removed and remove them (if were created by the deployment)
 				jobMap := map[string]bool{}

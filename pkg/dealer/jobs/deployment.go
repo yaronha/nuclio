@@ -335,8 +335,8 @@ func (d *Deployment) updateJobs(triggers []*BaseJob) error {
 			d.jobs[rjob.Name] = job
 			d.dm.logger.DebugWith("Added new job to function", "function", d.Name, "job", rjob.Name, "tasks", rjob.TotalTasks)
 		} else {
+			d.dm.logger.DebugWith("check job changed state", "function", d.Name, "job", rjob.Name, "disable", rjob.Disable, "old", job.Disable)
 			if rjob.Disable != job.Disable {
-				d.dm.logger.DebugWith("job changed state", "function", d.Name, "job", rjob.Name, "disable", rjob.Disable)
 				job.NeedToSave()
 				jobsToSave = append(jobsToSave, job)
 				job.Disable = rjob.Disable
@@ -355,6 +355,7 @@ func (d *Deployment) updateJobs(triggers []*BaseJob) error {
 	// TODO: save one by one, immediately after spec change
 	d.dm.ctx.SaveJobs(jobsToSave)
 
+	d.dm.logger.DebugWith("before rebalance in updateJobs", "deploy", d.Name, "procs", len(d.procs), "have", haveEnabledJobs)
 	if len(d.procs) > 0 && haveEnabledJobs {
 		err := d.Rebalance()
 		if err != nil {

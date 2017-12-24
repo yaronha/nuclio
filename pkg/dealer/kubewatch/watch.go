@@ -219,7 +219,8 @@ func getDeployStruct(deploy *v1beta1.Deployment) *jobs.DeploymentSpec {
 		if err == nil {
 			dep.Triggers = []*jobs.BaseJob{}
 			for name, trigger := range fn.Triggers {
-				dep.Triggers = append(dep.Triggers, &jobs.BaseJob{Name: name, TotalTasks: trigger.Partitions, MaxTaskAllocation: trigger.MaxTasks})
+				dep.Triggers = append(dep.Triggers, &jobs.BaseJob{
+					Name: name, TotalTasks: trigger.Partitions, MaxTaskAllocation: trigger.MaxTasks, Disable: trigger.Disable})
 			}
 		} else {
 			fmt.Println("err", funcJson)
@@ -240,6 +241,7 @@ type trigStruct struct {
 	Kind       string `json:"kind"`
 	Partitions int    `json:"partitions"`
 	MaxTasks   int    `json:"maxTasks"`
+	Disable    bool   `json:"disable"`
 }
 
 func ListDeployments(client *kubernetes.Clientset, logger nuclio.Logger, namespace string) ([]*jobs.DeploymentSpec, error) {
