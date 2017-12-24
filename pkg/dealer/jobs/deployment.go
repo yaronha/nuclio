@@ -344,6 +344,7 @@ func (d *Deployment) updateJobs(triggers []*BaseJob) error {
 					d.SuspendJob(job)
 				} else {
 					haveEnabledJobs = true
+					job.UpdateState(JobStateRunning)
 				}
 			}
 		}

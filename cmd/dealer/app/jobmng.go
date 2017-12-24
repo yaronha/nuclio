@@ -335,6 +335,11 @@ func (jm *JobManager) updateJob(newjob *jobs.JobMessage) (*jobs.JobMessage, erro
 	job, dep := jm.findJob(newjob.Namespace, newjob.Function, newjob.Name)
 
 	if job != nil && !job.FromDeployment() {
+		if !job.FromDeployment() || job.GetState() != jobs.JobStateRunning || job.GetState() != jobs.JobStateSuspended {
+			jm.Ctx.Logger.WarnWith("cant changed job state, from deployment or inactive state",
+				"function", newjob.Function, "job", newjob.Name, "fromdep", job.FromDeployment(), "state", job.GetState())
+			return nil, fmt.Errorf("cant changed job state, from deployment or inactive state")
+		}
 		if newjob.Disable != job.Disable {
 			jm.Ctx.Logger.DebugWith("job changed state", "function", newjob.Function, "job", newjob.Name, "disable", newjob.Disable)
 			job.Disable = newjob.Disable
@@ -343,6 +348,7 @@ func (jm *JobManager) updateJob(newjob *jobs.JobMessage) (*jobs.JobMessage, erro
 			if newjob.Disable {
 				dep.SuspendJob(job)
 			} else {
+				job.UpdateState(jobs.JobStateRunning)
 				err := dep.Rebalance()
 				if err != nil {
 					jm.Ctx.Logger.ErrorWith("Failed to rebalance in updateJobs", "deploy", dep.Name, "err", err)
@@ -353,9 +359,9 @@ func (jm *JobManager) updateJob(newjob *jobs.JobMessage) (*jobs.JobMessage, erro
 		return job.GetJobState(), nil
 
 	} else {
-		jm.Ctx.Logger.WarnWith("Job not found or from deployment, cannot update the job", "ns", newjob.Namespace,
+		jm.Ctx.Logger.WarnWith("Job not found, cannot update the job", "ns", newjob.Namespace,
 			"function", newjob.Function, "job", newjob.Name)
-		return nil, fmt.Errorf("Job not found or from deployment, cannot update the job")
+		return nil, fmt.Errorf("Job not found, cannot update the job")
 
 	}
 
