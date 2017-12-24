@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"fmt"
+	"github.com/nuclio/nuclio/pkg/dealer/asyncflow"
 	"github.com/pkg/errors"
 	"net/http"
 )
@@ -14,7 +15,7 @@ type Deployment struct {
 	Version   string `json:"version,omitempty"`
 	Alias     string `json:"alias,omitempty"`
 
-	Triggers     []*Trigger `json:"triggers,omitempty"`
+	Triggers     []*BaseJob `json:"triggers,omitempty"`
 	ExpectedProc int        `json:"expectedProc,omitempty"`
 	procs        map[string]*Process
 	jobs         map[string]*Job
@@ -34,7 +35,7 @@ func (d *DeploymentMessage) Render(w http.ResponseWriter, r *http.Request) error
 	return nil
 }
 
-type Trigger struct {
+type Triggerrr struct {
 	Name              string      `json:"name"`
 	TotalTasks        int         `json:"totalTasks"`
 	MaxTaskAllocation int         `json:"maxTaskAllocation,omitempty"`
@@ -96,7 +97,7 @@ func (d *Deployment) GetDeploymentState() *DeploymentMessage {
 func (d *Deployment) GetActiveJobs() []*Job {
 	activeJobs := []*Job{}
 	for _, job := range d.jobs {
-		if job.desiredState == JobStateRunning {
+		if job.state == JobStateRunning {
 			activeJobs = append(activeJobs, job)
 		}
 	}
@@ -315,26 +316,23 @@ func (d *Deployment) addTasks2Proc(proc *Process, toAdd, totalTasks int) (int, e
 
 // read/update jobs from deployment
 func (d *Deployment) updateJobs() error {
+
+	haveEnabledJobs := false
 	for _, rjob := range d.Triggers {
 
 		_, ok := d.jobs[rjob.Name]
 		if !ok {
 			// if this deployment doesnt contain the Job, create and add one
-			desiredState := JobStateRunning
-			if rjob.Disabled {
-				desiredState = JobStateSuspended
-			}
-			newJob := &Job{Name: rjob.Name, Namespace: d.Namespace,
-				Function: d.Function, Version: d.Version, desiredState: desiredState,
-				TotalTasks: rjob.TotalTasks, MaxTaskAllocation: rjob.MaxTaskAllocation, Metadata: rjob.Metadata,
-			}
-			job, err := NewJob(d.dm.ctx, newJob)
-			job.NeedToSave()
-
+			job, err := NewJob(d.dm.ctx, &Job{BaseJob: *rjob,
+				Namespace: d.Namespace, Function: d.Function, Version: d.Version}, false)
 			if err != nil {
 				d.dm.logger.ErrorWith("Failed to create a job", "deploy", d.Name, "job", rjob.Name, "err", err)
 			}
 
+			if !job.Disable {
+				haveEnabledJobs = true
+			}
+			job.NeedToSave()
 			d.jobs[rjob.Name] = job
 			d.dm.logger.DebugWith("Added new job to function", "function", d.Name, "job", rjob.Name, "tasks", rjob.TotalTasks)
 		}
@@ -345,7 +343,7 @@ func (d *Deployment) updateJobs() error {
 
 	d.dm.ctx.SaveJobs(d.jobs)
 
-	if len(d.procs) > 0 {
+	if len(d.procs) > 0 && haveEnabledJobs {
 		err := d.Rebalance()
 		if err != nil {
 			d.dm.logger.ErrorWith("Failed to rebalance in updateJobs", "deploy", d.Name, "err", err)
@@ -358,41 +356,32 @@ func (d *Deployment) updateJobs() error {
 }
 
 // add job while the deployment is working
-func (d *Deployment) AddJob(rjob *Job, desiredState JobState) (*Job, error) {
+func (d *Deployment) AddJob(rjob *Job) (*Job, error) {
 
 	var err error
-	if desiredState == JobStateUnassigned {
-		desiredState = JobStateRunning
-	}
-
 	job, ok := d.jobs[rjob.Name]
 
 	if !ok {
 		// if this deployment doesnt contain the Job, create and add one
-		// TODO: seperate desired/current state
-		newJob := &Job{Name: rjob.Name, Namespace: d.Namespace, desiredState: desiredState, state: desiredState,
-			Function: d.Function, Version: d.Version,
-			TotalTasks: rjob.TotalTasks, MaxTaskAllocation: rjob.MaxTaskAllocation, Metadata: rjob.Metadata,
-		}
-		job, err = NewJob(d.dm.ctx, newJob)
-		job.PostDeployment = true
-		job.NeedToSave()
+		job, err = NewJob(d.dm.ctx, rjob, true)
 		if err != nil {
 			d.dm.logger.ErrorWith("Failed to create a job", "deploy", d.Name, "job", rjob.Name, "err", err)
 		}
 
+		job.NeedToSave()
 		d.jobs[rjob.Name] = job
 		d.dm.ctx.SaveJobs(d.jobs)
 
 		d.dm.logger.DebugWith("Added new job to function", "function", d.Name, "job", rjob.Name, "tasks", rjob.TotalTasks)
-		err = d.Rebalance()
-		if err != nil {
-			d.dm.logger.ErrorWith("Failed to rebalance after AddJob", "deploy", d.Name, "job", rjob.Name, "err", err)
-			return nil, err
+		if !job.Disable {
+			err = d.Rebalance()
+			if err != nil {
+				d.dm.logger.ErrorWith("Failed to rebalance after AddJob", "deploy", d.Name, "job", rjob.Name, "err", err)
+				return nil, err
+			}
 		}
 	} else {
 		d.dm.logger.InfoWith("Add job to function - Job already exist", "function", d.Name, "job", rjob.Name)
-		job.ChangeState(desiredState)
 	}
 
 	return job, nil
@@ -401,45 +390,43 @@ func (d *Deployment) AddJob(rjob *Job, desiredState JobState) (*Job, error) {
 // remove job while the deployment is working
 func (d *Deployment) RemoveJob(job *Job, force bool) error {
 
-	if !job.PostDeployment {
-		d.dm.logger.WarnWith("Cannot remove jobs that originate in the function spec", "function", d.Name, "job", job.Name)
+	if job.FromDeployment() {
+		d.dm.logger.WarnWith("Cannot remove jobs that originate in function spec, update the function instead",
+			"function", d.Name, "job", job.Name)
 		return nil
 	}
 
-	if job.desiredState == JobStateDelete {
+	if job.GetState() == JobStateStopping {
 		d.dm.logger.WarnWith("RemoveJob - ignored, already removing job", "function", d.Name, "job", job.Name)
 		return nil
 	}
 
-	job.IsStopping = true
-	job.ChangeState(JobStateDelete)
-	d.dm.logger.DebugWith("RemoveJob", "function", d.Name, "job", job.Name, "tasks", job.assignedTasks, "state", job.GetState())
+	d.dm.logger.DebugWith("Removing Job", "function", d.Name, "job", job.Name, "tasks", job.assignedTasks, "state", job.GetState())
+	if job.GetState() != JobStateRunning || job.assignedTasks == 0 {
+		delete(d.jobs, job.Name)
+		return nil
+	}
 
-	if job.GetState() == JobStateRunning && job.assignedTasks > 0 {
+	job.UpdateState(JobStateStopping)
+	wt := d.dm.ctx.NewWorkflowTask(asyncflow.AsyncWorkflowTask{
+		Name:       "RemoveJob",
+		TimeoutSec: 60,
+		OnComplete: func(awt *asyncflow.AsyncWorkflowTask) {
+			// TODO: verify job still exist
+			d.dm.logger.InfoWith("finalize RemoveJob", "function", d.Name, "job", job.Name)
+			delete(d.jobs, job.Name)
+		},
+		OnTimeout: func(awt *asyncflow.AsyncWorkflowTask) {
+			d.dm.logger.ErrorWith("timeout on RemoveJob", "function", d.Name, "job", job.Name)
+		},
+	})
+	job.postStop.AddTask(wt)
+	d.dm.logger.DebugWith("RemoveJob - async started", "function", d.Name, "job", job.Name)
 
-		job.UpdateCurrentState(JobStateStopping) // TODO: part of change state
-		d.dm.logger.DebugWith("RemoveJob - pre async", "function", d.Name, "job", job.Name)
-		wt := d.dm.ctx.NewWorkflowTask(AsyncWorkflowTask{
-			Name:       "RemoveJob",
-			TimeoutSec: 60,
-			OnComplete: func(awt *AsyncWorkflowTask) {
-				// TODO: verify job still exist
-				d.dm.logger.InfoWith("finalize RemoveJob", "function", d.Name, "job", job.Name)
-				delete(d.jobs, job.Name)
-			},
-			OnTimeout: func(awt *AsyncWorkflowTask) {
-				d.dm.logger.ErrorWith("timeout on RemoveJob", "function", d.Name, "job", job.Name)
-			},
-		})
-		job.postStop = wt
-		wt.Start()
-		d.dm.logger.DebugWith("RemoveJob - async started", "function", d.Name, "job", job.Name)
-
-		for _, proc := range d.procs {
-			err := proc.ClearJobTasks(job.Name)
-			if err != nil {
-				d.dm.logger.ErrorWith("Error when stopping Job - cant clear tasks", "Job", job.Name, "process", proc.Name, "error", err)
-			}
+	for _, proc := range d.procs {
+		err := proc.ClearJobTasks(job.Name)
+		if err != nil {
+			d.dm.logger.ErrorWith("Error when stopping Job - cant clear tasks", "Job", job.Name, "process", proc.Name, "error", err)
 		}
 	}
 

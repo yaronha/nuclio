@@ -215,9 +215,9 @@ func getDeployStruct(deploy *v1beta1.Deployment) *jobs.Deployment {
 		fn := funcStruct{}
 		err := json.Unmarshal([]byte(funcJson), &fn)
 		if err == nil {
-			dep.Triggers = []*jobs.Trigger{}
+			dep.Triggers = []*jobs.BaseJob{}
 			for name, trigger := range fn.Triggers {
-				dep.Triggers = append(dep.Triggers, &jobs.Trigger{Name: name, TotalTasks: trigger.Partitions, MaxTaskAllocation: trigger.MaxTasks})
+				dep.Triggers = append(dep.Triggers, &jobs.BaseJob{Name: name, TotalTasks: trigger.Partitions, MaxTaskAllocation: trigger.MaxTasks})
 			}
 		} else {
 			fmt.Println("err", funcJson)

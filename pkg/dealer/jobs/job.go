@@ -18,6 +18,7 @@ package jobs
 
 import (
 	"fmt"
+	"github.com/nuclio/nuclio/pkg/dealer/asyncflow"
 	"net/http"
 	"time"
 )
@@ -25,57 +26,63 @@ import (
 type JobState int8
 
 const (
-	JobStateUnassigned JobState = 0
+	JobStateUnknown    JobState = 0
 	JobStateRunning    JobState = 1 // distributed to processes
 	JobStateStopping   JobState = 2 // asking the processes to stop/free job task
 	JobStateSuspended  JobState = 3 // user requested to suspend the job
 	JobStateWaitForDep JobState = 4 // Job is waiting for the deployment to start
-	JobStateScheduled  JobState = 4 // Job is scheduled for deployment
-	JobStateCompleted  JobState = 5 // Job processing completed
-	JobStateDelete     JobState = 6 // Job processing completed
+	JobStateScheduled  JobState = 5 // Job is scheduled for deployment
+	JobStateCompleted  JobState = 6 // Job processing completed
 )
 
-type Job struct {
-	ctx  *ManagerContext
+type BaseJob struct {
 	Name string `json:"name"`
-	// Job to function association (namespace, function, version/alias)
-	Namespace string `json:"namespace"`
-	Function  string `json:"function"`
-	Version   string `json:"version,omitempty"`
 	// when true the job is suspended
-	Suspend bool `json:"suspend,omitempty"`
-	// The start time of the job
-	StartTime time.Time `json:"startTime,omitempty"`
+	Disable bool `json:"disable,omitempty"`
 	// Total number of tasks to be distributed to workers
 	TotalTasks int `json:"totalTasks"`
 	// Maximum Job tasks executed per processor at a given time
 	MaxTaskAllocation int `json:"maxTaskAllocation,omitempty"`
-	// the Job was created after the deployment (function) creation, i.e. submitted directly to the dealer
-	PostDeployment bool `json:"postDeployment,omitempty"`
-	// List of completed tasks
-	CompletedTasks []int `json:"completedTasks,omitempty"`
 	// Job can spawn multiple versions (e.g. Canary Deployment)
 	IsMultiVersion bool `json:"isMultiVersion,omitempty"`
-	// Job need to be saved to persistent storage
-	markedDirty bool
 	// Private Job Metadata, will be passed to the processor as is
 	Metadata interface{} `json:"metadata,omitempty"`
+
+	// TODO: not used for now, maybe for determining Function min/max
+	MinProcesses int `json:"minProcesses,omitempty"`
+	MaxProcesses int `json:"maxProcesses,omitempty"`
+}
+
+type Job struct {
+	BaseJob
+	ctx *ManagerContext
+	// Job to function association (namespace, function, version/alias)
+	Namespace string `json:"namespace"`
+	Function  string `json:"function"`
+	Version   string `json:"version,omitempty"`
+	// The start time of the job
+	StartTime time.Time `json:"startTime,omitempty"`
+	// the Job was created after the deployment (function) creation, i.e. submitted directly to the dealer
+	postDeployment bool `json:"postDeployment,omitempty"`
+	// List of completed tasks
+	CompletedTasks []int `json:"completedTasks,omitempty"`
+	// Job need to be saved to persistent storage
+	markedDirty bool
 	// Job state
-	state        JobState
-	desiredState JobState
+	state JobState
+	//desiredState JobState
 
 	tasks         []*Task
 	maxTaskId     int
 	assignedTasks int
-	IsStopping    bool
-	postStop      *AsyncWorkflowTask
+	postStop      *asyncflow.AsyncCB
 }
 
 // Job request and response for the REST API
 type JobMessage struct {
 	Job
-	DesiredState JobState
-	Tasks        []TaskMessage `json:"tasks"`
+	//DesiredState JobState
+	Tasks []TaskMessage `json:"tasks"`
 }
 
 func (j *JobMessage) Bind(r *http.Request) error {
@@ -87,7 +94,7 @@ func (j *JobMessage) Render(w http.ResponseWriter, r *http.Request) error {
 }
 
 // create a new job, add critical Metadata, and initialize Tasks struct
-func NewJob(context *ManagerContext, newJob *Job) (*Job, error) {
+func NewJob(context *ManagerContext, newJob *Job, postDeployment bool) (*Job, error) {
 
 	if newJob.Namespace == "" {
 		newJob.Namespace = "default"
@@ -95,6 +102,12 @@ func NewJob(context *ManagerContext, newJob *Job) (*Job, error) {
 
 	newJob.StartTime = time.Now()
 	newJob.ctx = context
+	newJob.postDeployment = postDeployment
+	if newJob.Disable {
+		newJob.state = JobStateSuspended
+	} else {
+		newJob.state = JobStateRunning
+	}
 
 	// Initialize an array of tasks based on the TotalTasks value
 	newJob.tasks = make([]*Task, newJob.TotalTasks)
@@ -117,19 +130,15 @@ func (j *Job) GetState() JobState {
 	return j.state
 }
 
-func (j *Job) GetDesiredState() JobState {
-	return j.desiredState
+func (j *Job) FromDeployment() bool {
+	return !j.postDeployment
 }
 
-func (j *Job) UpdateCurrentState(state JobState) {
-	if state == JobStateSuspended && j.postStop != nil {
-		j.postStop.Complete(nil, nil)
+func (j *Job) UpdateState(state JobState) {
+	if state == JobStateSuspended && j.state != JobStateSuspended {
+		j.postStop.Call(nil, nil)
 	}
 	j.state = state
-}
-
-func (j *Job) ChangeState(state JobState) {
-	j.desiredState = state
 }
 
 func (j *Job) InitTask(task *TaskMessage) {
@@ -150,7 +159,6 @@ func (j *Job) InitTask(task *TaskMessage) {
 func (j *Job) GetJobState() *JobMessage {
 	jobMessage := JobMessage{Job: *j}
 	jobMessage.Tasks = []TaskMessage{}
-	jobMessage.DesiredState = j.desiredState
 
 	for _, task := range j.tasks {
 		jobMessage.Tasks = append(jobMessage.Tasks, task.ToMessage(true))
@@ -161,7 +169,7 @@ func (j *Job) GetJobState() *JobMessage {
 // find N tasks which are unallocated starting from index
 func (j *Job) findUnallocTask(num int, from *int) []*Task {
 	list := []*Task{}
-	if num <= 0 || j.IsStopping {
+	if num <= 0 || j.GetState() != JobStateRunning {
 		return list
 	}
 

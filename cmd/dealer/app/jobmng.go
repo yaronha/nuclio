@@ -97,6 +97,7 @@ func (jm *JobManager) Start() error {
 			case asyncTask := <-jm.Ctx.AsyncTasksChannel:
 				jm.Ctx.Logger.DebugWith("Got asyncTask", "name", asyncTask.Name, "timeout", asyncTask.IsTimeout())
 				if asyncTask.IsTimeout() {
+					jm.Ctx.Logger.WarnWith("Async task timed-out", "name", asyncTask.Name)
 					asyncTask.OnTimeout(asyncTask)
 				} else {
 					asyncTask.OnComplete(asyncTask)
@@ -255,7 +256,7 @@ func (jm *JobManager) addJob(job *jobs.JobMessage) (*jobs.JobMessage, error) {
 		return nil, fmt.Errorf("Deployment %s %s %s not found, cannot add a job", job.Namespace, job.Function, job.Version)
 	}
 
-	newJob, err := dep.AddJob(&job.Job, job.DesiredState)
+	newJob, err := dep.AddJob(&job.Job)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to add job to deployment")
 	}
@@ -282,7 +283,7 @@ func (jm *JobManager) InitJobs(namespace string) error {
 			continue
 		}
 
-		newJob, err := dep.AddJob(&job.Job, job.DesiredState)
+		newJob, err := dep.AddJob(&job.Job)
 		if err != nil {
 			jm.Ctx.Logger.WarnWith("Failed to add job to deployment", "ns", job.Namespace,
 				"function", job.Function, "ver", job.Version, "job", job.Name, "err", err)

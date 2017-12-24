@@ -132,7 +132,7 @@ func (p *Process) Remove() error {
 			task.LastUpdate = time.Now()
 		}
 		if job.job.GetState() == JobStateStopping && job.job.assignedTasks == 0 {
-			job.job.UpdateCurrentState(JobStateSuspended)
+			job.job.UpdateState(JobStateSuspended)
 		}
 	}
 
@@ -376,12 +376,12 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest, isInit bool)
 					task.SetState(TaskStateUnassigned)
 					p.RemoveTask(jobName, taskID)
 					tasksDeleted = true
-					if job.IsStopping && job.assignedTasks != 0 {
+					if job.GetState() == JobStateStopping && job.assignedTasks != 0 {
 						// wait with re-balance until all Job tasks are removed
 						tasksStopping = true
 					}
 					if job.GetState() == JobStateStopping && job.assignedTasks == 0 {
-						job.UpdateCurrentState(JobStateSuspended)
+						job.UpdateState(JobStateSuspended)
 						forceRebalance = true
 					}
 				}
