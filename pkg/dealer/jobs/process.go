@@ -320,6 +320,7 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest, isInit bool)
 
 	tasksDeleted := false
 	tasksStopping := false
+	moreTasksToDelete := false
 	forceRebalance := false
 	jobsToSave := []*Job{}
 
@@ -378,11 +379,12 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest, isInit bool)
 					tasksDeleted = true
 					if job.GetState() == JobStateStopping && job.assignedTasks != 0 {
 						// wait with re-balance until all Job tasks are removed
-						tasksStopping = true
+						moreTasksToDelete = true
 					}
 					if job.GetState() == JobStateStopping && job.assignedTasks == 0 {
 						job.UpdateState(JobStateSuspended)
 						forceRebalance = true
+						moreTasksToDelete = false
 					}
 				}
 			case TaskStateStopping:
@@ -427,11 +429,12 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest, isInit bool)
 
 	// if some tasks deleted (returned to pool) rebalance
 	p.logger.DebugWith("HandleTaskUpdates", "processor", p.Name, "forceRebalance", forceRebalance, "tasksDeleted", tasksDeleted, "tasksStopping", tasksStopping)
-	if forceRebalance || (tasksDeleted && !tasksStopping) {
+	if tasksDeleted && !moreTasksToDelete {
 		p.removingTasks = true
 		p.deployment.Rebalance() //TODO: verify no circular dep
-		p.removingTasks = false
 	}
+
+	p.removingTasks = tasksStopping
 
 	return nil
 
