@@ -103,6 +103,7 @@ func NewJob(context *ManagerContext, newJob *Job, postDeployment bool) (*Job, er
 	newJob.StartTime = time.Now()
 	newJob.ctx = context
 	newJob.postDeployment = postDeployment
+	newJob.postStop = asyncflow.NewAsyncCB()
 	if newJob.Disable {
 		newJob.state = JobStateSuspended
 	} else {
