@@ -318,6 +318,7 @@ func (d *Deployment) addTasks2Proc(proc *Process, toAdd, totalTasks int) (int, e
 func (d *Deployment) updateJobs() error {
 
 	haveEnabledJobs := false
+	jobsToSave := []*Job{}
 	for _, rjob := range d.Triggers {
 
 		_, ok := d.jobs[rjob.Name]
@@ -333,6 +334,7 @@ func (d *Deployment) updateJobs() error {
 				haveEnabledJobs = true
 			}
 			job.NeedToSave()
+			jobsToSave = append(jobsToSave, job)
 			d.jobs[rjob.Name] = job
 			d.dm.logger.DebugWith("Added new job to function", "function", d.Name, "job", rjob.Name, "tasks", rjob.TotalTasks)
 		}
@@ -341,7 +343,7 @@ func (d *Deployment) updateJobs() error {
 
 	}
 
-	d.dm.ctx.SaveJobs(d.jobs)
+	d.dm.ctx.SaveJobs(jobsToSave)
 
 	if len(d.procs) > 0 && haveEnabledJobs {
 		err := d.Rebalance()
@@ -370,7 +372,7 @@ func (d *Deployment) AddJob(rjob *Job) (*Job, error) {
 
 		job.NeedToSave()
 		d.jobs[rjob.Name] = job
-		d.dm.ctx.SaveJobs(d.jobs)
+		d.dm.ctx.SaveJobs([]*Job{job})
 
 		d.dm.logger.DebugWith("Added new job to function", "function", d.Name, "job", rjob.Name, "tasks", rjob.TotalTasks)
 		if !job.Disable {
@@ -404,6 +406,7 @@ func (d *Deployment) RemoveJob(job *Job, force bool) error {
 	d.dm.logger.DebugWith("Removing Job", "function", d.Name, "job", job.Name, "tasks", job.assignedTasks, "state", job.GetState())
 	if job.GetState() != JobStateRunning || job.assignedTasks == 0 {
 		delete(d.jobs, job.Name)
+		d.dm.ctx.DeleteJobRecord(job)
 		return nil
 	}
 
@@ -415,6 +418,7 @@ func (d *Deployment) RemoveJob(job *Job, force bool) error {
 			// TODO: verify job still exist
 			d.dm.logger.InfoWith("finalize RemoveJob", "function", d.Name, "job", job.Name)
 			delete(d.jobs, job.Name)
+			d.dm.ctx.DeleteJobRecord(job)
 		},
 		OnTimeout: func(awt *asyncflow.AsyncWorkflowTask) {
 			d.dm.logger.ErrorWith("timeout on RemoveJob", "function", d.Name, "job", job.Name)
@@ -430,11 +434,6 @@ func (d *Deployment) RemoveJob(job *Job, force bool) error {
 		}
 	}
 
-	if job.assignedTasks == 0 {
-		d.dm.logger.InfoWith("finalize RemoveJob", "function", d.Name, "job", job.Name)
-		delete(d.jobs, job.Name)
-	}
-
 	return nil
 }
 
@@ -446,8 +445,7 @@ func (d *Deployment) ClearDeployment() error {
 		proc.ClearAll()
 	}
 
-	// Delete Jobs from persistent stor
-	d.dm.ctx.DeleteJobRecords(d.jobs)
+	// TODO: Delete Jobs from persistent stor if they are from deployment, change state for others
 
 	return nil
 }

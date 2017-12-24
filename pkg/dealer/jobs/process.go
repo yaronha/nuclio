@@ -321,7 +321,7 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest, isInit bool)
 	tasksDeleted := false
 	tasksStopping := false
 	forceRebalance := false
-	jobsToSave := map[string]*Job{}
+	jobsToSave := []*Job{}
 
 	// Update state of currently allocated tasks
 	for jobName, msgJob := range msg.Jobs {
@@ -350,7 +350,7 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest, isInit bool)
 
 			// Do we need to persist job metadata ?
 			if task.CheckPoint != nil && !job.NeedToSave() {
-				jobsToSave[job.Name] = job
+				jobsToSave = append(jobsToSave, job)
 			}
 
 			task.LastUpdate = time.Now()
@@ -394,7 +394,7 @@ func (p *Process) HandleTaskUpdates(msg *ProcessMessage, isRequest, isInit bool)
 					// if this is the first time we get completion we add the task to completed and save list
 					job.CompletedTasks = append(job.CompletedTasks, taskID)
 					if !job.NeedToSave() {
-						jobsToSave[job.Name] = job
+						jobsToSave = append(jobsToSave, job)
 					}
 				}
 				task.SetState(TaskStateCompleted)

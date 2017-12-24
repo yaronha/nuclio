@@ -10,7 +10,7 @@ import (
 
 type JobStore interface {
 	//GetJob(namespace, function, name string) (*jobs.Job, error)
-	DelJob(namespace, function, name string) error
+	DelJob(job *Job) error
 	SaveJob(job *Job) error
 	ListJobs(namespace string) ([]*JobMessage, error)
 }
@@ -57,8 +57,10 @@ func (fs *JobFileStore) ListJobs(namespace string) ([]*JobMessage, error) {
 	return jobList, nil
 }
 
-func (fs *JobFileStore) DelJob(namespace, function, name string) error {
-	return nil
+func (fs *JobFileStore) DelJob(job *Job) error {
+	filename := job.Namespace + "_" + job.Function + "_" + job.Name + ".json"
+	fullpath := path.Join(fs.Path, filename)
+	return os.Remove(fullpath)
 }
 
 func (fs *JobFileStore) SaveJob(job *Job) error {

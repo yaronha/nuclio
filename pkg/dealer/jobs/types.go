@@ -60,7 +60,7 @@ func (mc *ManagerContext) SubmitReq(request *RequestMessage) (interface{}, error
 	return nil, nil
 }
 
-func (mc *ManagerContext) SaveJobs(jobs map[string]*Job) {
+func (mc *ManagerContext) SaveJobs(jobs []*Job) {
 	if len(jobs) == 0 {
 		return
 	}
@@ -69,18 +69,18 @@ func (mc *ManagerContext) SaveJobs(jobs map[string]*Job) {
 	for _, job := range jobs {
 		err := mc.JobStore.SaveJob(job)
 		if err != nil {
-			mc.Logger.ErrorWith("Error Saving Job", "jobs", job.Name, "err", err)
+			mc.Logger.ErrorWith("Error Saving Job", "job", job.Name, "err", err)
 		}
 	}
 }
 
-func (mc *ManagerContext) DeleteJobRecords(jobs map[string]*Job) {
-	if len(jobs) == 0 {
-		return
-	}
+func (mc *ManagerContext) DeleteJobRecord(job *Job) {
 
-	mc.Logger.DebugWith("Deleting Jobs", "jobs", jobs)
-	// TODO: delete jobs state from persistent storage
+	mc.Logger.DebugWith("Deleting Job", "job", job)
+	err := mc.JobStore.DelJob(job)
+	if err != nil {
+		mc.Logger.ErrorWith("Error Deleting Job", "job", job.Name, "err", err)
+	}
 }
 
 func (mc *ManagerContext) NewWorkflowTask(task asyncflow.AsyncWorkflowTask) *asyncflow.AsyncWorkflowTask {
