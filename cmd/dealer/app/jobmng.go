@@ -98,9 +98,9 @@ func (jm *JobManager) Start() error {
 				jm.Ctx.Logger.DebugWith("Got asyncTask", "name", asyncTask.Name, "timeout", asyncTask.IsTimeout())
 				if asyncTask.IsTimeout() {
 					jm.Ctx.Logger.WarnWith("Async task timed-out", "name", asyncTask.Name)
-					asyncTask.OnTimeout(asyncTask)
+					asyncTask.CallOnTimeout()
 				} else {
-					asyncTask.OnComplete(asyncTask)
+					asyncTask.CallOnComplete()
 				}
 
 			case req := <-jm.Ctx.RequestsChannel:
