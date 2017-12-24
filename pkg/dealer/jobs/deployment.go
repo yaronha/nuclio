@@ -7,24 +7,32 @@ import (
 	"net/http"
 )
 
-type Deployment struct {
-	dm        *DeploymentMap
-	Namespace string `json:"namespace"`
-	Function  string `json:"function"`
-	Name      string `json:"name"`
-	Version   string `json:"version,omitempty"`
-	Alias     string `json:"alias,omitempty"`
+type BaseDeployment struct {
+	Namespace    string `json:"namespace"`
+	Function     string `json:"function"`
+	Name         string `json:"name"`
+	Version      string `json:"version,omitempty"`
+	Alias        string `json:"alias,omitempty"`
+	FuncGen      string `json:"funcGen,omitempty"`
+	ExpectedProc int    `json:"expectedProc,omitempty"`
+}
 
-	Triggers     []*BaseJob `json:"triggers,omitempty"`
-	ExpectedProc int        `json:"expectedProc,omitempty"`
-	procs        map[string]*Process
-	jobs         map[string]*Job
+type Deployment struct {
+	BaseDeployment
+	dm    *DeploymentMap
+	procs map[string]*Process
+	jobs  map[string]*Job
+}
+
+type DeploymentSpec struct {
+	BaseDeployment
+	Triggers []*BaseJob `json:"triggers,omitempty"`
 }
 
 type DeploymentMessage struct {
-	Deployment
-	Processes []string
-	Jobs      []string
+	BaseDeployment
+	Processes []string `json:"processes,omitempty"`
+	Jobs      []string `json:"jobs,omitempty"`
 }
 
 func (d *DeploymentMessage) Bind(r *http.Request) error {
@@ -33,17 +41,6 @@ func (d *DeploymentMessage) Bind(r *http.Request) error {
 
 func (d *DeploymentMessage) Render(w http.ResponseWriter, r *http.Request) error {
 	return nil
-}
-
-type Triggerrr struct {
-	Name              string      `json:"name"`
-	TotalTasks        int         `json:"totalTasks"`
-	MaxTaskAllocation int         `json:"maxTaskAllocation,omitempty"`
-	MinProcesses      int         `json:"minProcesses,omitempty"`
-	MaxProcesses      int         `json:"maxProcesses,omitempty"`
-	Metadata          interface{} `json:"metadata,omitempty"`
-	IsMultiVersion    bool        `json:"isMultiVersion,omitempty"`
-	Disabled          bool        `json:"disabled,omitempty"`
 }
 
 func (d *Deployment) AddProcess(proc *Process) {
@@ -80,7 +77,7 @@ func (d *Deployment) GetJobs() map[string]*Job {
 }
 
 func (d *Deployment) GetDeploymentState() *DeploymentMessage {
-	dep := DeploymentMessage{Deployment: *d}
+	dep := DeploymentMessage{BaseDeployment: d.BaseDeployment}
 	dep.Processes = []string{}
 	dep.Jobs = []string{}
 
@@ -314,14 +311,14 @@ func (d *Deployment) addTasks2Proc(proc *Process, toAdd, totalTasks int) (int, e
 	return added, nil
 }
 
-// read/update jobs from deployment
-func (d *Deployment) updateJobs() error {
+// read/update job specs from deployment
+func (d *Deployment) updateJobs(triggers []*BaseJob) error {
 
 	haveEnabledJobs := false
 	jobsToSave := []*Job{}
-	for _, rjob := range d.Triggers {
+	for _, rjob := range triggers {
 
-		_, ok := d.jobs[rjob.Name]
+		job, ok := d.jobs[rjob.Name]
 		if !ok {
 			// if this deployment doesnt contain the Job, create and add one
 			job, err := NewJob(d.dm.ctx, &Job{BaseJob: *rjob,
@@ -337,12 +334,25 @@ func (d *Deployment) updateJobs() error {
 			jobsToSave = append(jobsToSave, job)
 			d.jobs[rjob.Name] = job
 			d.dm.logger.DebugWith("Added new job to function", "function", d.Name, "job", rjob.Name, "tasks", rjob.TotalTasks)
+		} else {
+			if rjob.Disable != job.Disable {
+				d.dm.logger.DebugWith("job changed state", "function", d.Name, "job", rjob.Name, "disable", rjob.Disable)
+				job.NeedToSave()
+				jobsToSave = append(jobsToSave, job)
+				job.Disable = rjob.Disable
+				if rjob.Disable {
+					d.SuspendJob(job)
+				} else {
+					haveEnabledJobs = true
+				}
+			}
 		}
 
 		//TODO: handle state transitions (enabled/disabled/removal/add)
 
 	}
 
+	// TODO: save one by one, immediately after spec change
 	d.dm.ctx.SaveJobs(jobsToSave)
 
 	if len(d.procs) > 0 && haveEnabledJobs {
@@ -392,12 +402,6 @@ func (d *Deployment) AddJob(rjob *Job) (*Job, error) {
 // remove job while the deployment is working
 func (d *Deployment) RemoveJob(job *Job, force bool) error {
 
-	if job.FromDeployment() {
-		d.dm.logger.WarnWith("Cannot remove jobs that originate in function spec, update the function instead",
-			"function", d.Name, "job", job.Name)
-		return nil
-	}
-
 	if job.GetState() == JobStateStopping {
 		d.dm.logger.WarnWith("RemoveJob - ignored, already removing job", "function", d.Name, "job", job.Name)
 		return nil
@@ -427,6 +431,26 @@ func (d *Deployment) RemoveJob(job *Job, force bool) error {
 	job.postStop.AddTask(wt)
 	d.dm.logger.DebugWith("RemoveJob - async started", "function", d.Name, "job", job.Name)
 
+	for _, proc := range d.procs {
+		err := proc.ClearJobTasks(job.Name)
+		if err != nil {
+			d.dm.logger.ErrorWith("Error when stopping Job - cant clear tasks", "Job", job.Name, "process", proc.Name, "error", err)
+		}
+	}
+
+	return nil
+}
+
+// remove job while the deployment is working
+func (d *Deployment) SuspendJob(job *Job) error {
+
+	if job.GetState() == JobStateStopping {
+		d.dm.logger.WarnWith("SuspendJob - ignored, already stopping job", "function", d.Name, "job", job.Name)
+		return nil
+	}
+
+	d.dm.logger.DebugWith("Suspend Job", "function", d.Name, "job", job.Name, "tasks", job.assignedTasks, "state", job.GetState())
+	job.UpdateState(JobStateStopping)
 	for _, proc := range d.procs {
 		err := proc.ClearJobTasks(job.Name)
 		if err != nil {

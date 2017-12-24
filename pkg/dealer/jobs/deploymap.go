@@ -19,27 +19,28 @@ func NewDeploymentMap(logger nuclio.Logger, context *ManagerContext) (*Deploymen
 	return &newDeploymentMap, nil
 }
 
-func (dm *DeploymentMap) NewDeployment(newDeployment *Deployment) *Deployment {
+func (dm *DeploymentMap) NewDeployment(deploymentSpec *DeploymentSpec) *Deployment {
+	newDeployment := &Deployment{BaseDeployment: deploymentSpec.BaseDeployment}
 	newDeployment.dm = dm
 	newDeployment.procs = map[string]*Process{}
 	newDeployment.jobs = map[string]*Job{}
 	return newDeployment
 }
 
-func (dm *DeploymentMap) UpdateDeployment(deployment *Deployment) (*Deployment, error) {
+func (dm *DeploymentMap) UpdateDeployment(newDep *DeploymentSpec) (*Deployment, error) {
 
-	if deployment.Namespace == "" {
-		deployment.Namespace = "default"
+	if newDep.Namespace == "" {
+		newDep.Namespace = "default"
 	}
-	dm.logger.DebugWith("Update Deployment", "deployment", deployment)
+	dm.logger.DebugWith("Update Deployment", "deployment", newDep)
 
 	// find the deployment list for the desired namespace/function (w/o version)
-	key := deployment.Namespace + "." + deployment.Function
+	key := newDep.Namespace + "." + newDep.Function
 	list, ok := dm.deployments[key]
 	if !ok {
 		// if not found create a new deployment list
-		dep := dm.NewDeployment(deployment)
-		err := dep.updateJobs()
+		dep := dm.NewDeployment(newDep)
+		err := dep.updateJobs(newDep.Triggers)
 		if err != nil {
 			dm.logger.ErrorWith("Failed to update jobs in deployment", "deploy", dep.Name, "err", err)
 			return nil, err
@@ -52,37 +53,59 @@ func (dm *DeploymentMap) UpdateDeployment(deployment *Deployment) (*Deployment, 
 
 	// look for a specific deployment matching the version number, if found update it
 	for _, dep := range list {
-		if dep.Version == deployment.Version {
+		if dep.Version == newDep.Version {
 			// check if for some reason the name in the deployment object changed
-			if dep.Name != "" && dep.Name != deployment.Name {
+			if dep.Name != "" && dep.Name != newDep.Name {
 				dm.logger.WarnWith("Deployment name changed",
 					"namespace", dep.Namespace, "function", dep.Function, "version", dep.Version,
-					"old-name", dep.Name, "new-name", deployment.Name)
+					"old-name", dep.Name, "new-name", newDep.Name)
 			}
-			dep.Name = deployment.Name
+			dep.Name = newDep.Name
 
 			// check if the deployment Alias changed (may need to re-route events)
-			if dep.Alias != deployment.Alias {
+			if dep.Alias != newDep.Alias {
 				// TODO: handle alias change, POD may already restart w new Alias
 				dm.logger.WarnWith("Deployment alias changed",
 					"namespace", dep.Namespace, "function", dep.Function, "version", dep.Version,
-					"old-alias", dep.Alias, "new-alias", deployment.Alias)
+					"old-alias", dep.Alias, "new-alias", newDep.Alias)
 
-				dep.Alias = deployment.Alias
+				dep.Alias = newDep.Alias
 			}
 
 			// check if the deployment scale changed
-			if dep.ExpectedProc != deployment.ExpectedProc {
+			if dep.ExpectedProc != newDep.ExpectedProc {
 				dm.logger.DebugWith("Deployment scale changed",
 					"namespace", dep.Namespace, "function", dep.Function, "version", dep.Version,
-					"old-scale", dep.ExpectedProc, "new-scale", deployment.ExpectedProc)
+					"old-scale", dep.ExpectedProc, "new-scale", newDep.ExpectedProc)
 
 				oldValue := dep.ExpectedProc
-				dep.ExpectedProc = deployment.ExpectedProc
+				dep.ExpectedProc = newDep.ExpectedProc
 				if dep.ExpectedProc != 0 && dep.ExpectedProc > oldValue && len(dep.procs) > 0 {
 					// dont re-balance if we scale-down, wait for processes to stop
 					dep.Rebalance()
 				}
+			}
+
+			// TODO: if function gen changed updateJobs, handle removed
+			if newDep.FuncGen != "" && dep.FuncGen != newDep.FuncGen {
+
+				// Identify if jobs were removed and remove them (if were created by the deployment)
+				jobMap := map[string]bool{}
+				for _, job := range newDep.Triggers {
+					jobMap[job.Name] = true
+				}
+				for jobName, job := range dep.jobs {
+					if _, found := jobMap[jobName]; !found && job.FromDeployment() {
+						dep.RemoveJob(job, false)
+					}
+				}
+
+				err := dep.updateJobs(newDep.Triggers)
+				if err != nil {
+					dm.logger.ErrorWith("Failed to update jobs in deployment", "deploy", newDep.Name, "err", err)
+					return nil, err
+				}
+
 			}
 
 			return dep, nil
@@ -90,10 +113,10 @@ func (dm *DeploymentMap) UpdateDeployment(deployment *Deployment) (*Deployment, 
 	}
 
 	// if its a new deployment add it to the list
-	dep := dm.NewDeployment(deployment)
-	err := dep.updateJobs()
+	dep := dm.NewDeployment(newDep)
+	err := dep.updateJobs(newDep.Triggers)
 	if err != nil {
-		dm.logger.ErrorWith("Failed to update jobs in deployment", "deploy", dep.Name, "err", err)
+		dm.logger.ErrorWith("Failed to update jobs in deployment", "deploy", newDep.Name, "err", err)
 		return nil, err
 	}
 	dm.deployments[key] = append(dm.deployments[key], dep)

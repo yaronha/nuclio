@@ -201,14 +201,16 @@ func NewDeployWatcher(client *kubernetes.Clientset, managerContext *jobs.Manager
 	return nil
 }
 
-func getDeployStruct(deploy *v1beta1.Deployment) *jobs.Deployment {
-	dep := jobs.Deployment{
+func getDeployStruct(deploy *v1beta1.Deployment) *jobs.DeploymentSpec {
+	depBase := jobs.BaseDeployment{
 		Name: deploy.Name, Namespace: deploy.Namespace,
 		Function:     deploy.Labels["name"],
 		Version:      deploy.Labels["version"],
 		Alias:        deploy.Labels["alias"],
 		ExpectedProc: int(*deploy.Spec.Replicas),
 	}
+	depBase.FuncGen = deploy.Annotations["func_gen"]
+	dep := jobs.DeploymentSpec{BaseDeployment: depBase}
 
 	funcJson, ok := deploy.Annotations["func_json"]
 	if ok {
@@ -240,7 +242,7 @@ type trigStruct struct {
 	MaxTasks   int    `json:"maxTasks"`
 }
 
-func ListDeployments(client *kubernetes.Clientset, logger nuclio.Logger, namespace string) ([]*jobs.Deployment, error) {
+func ListDeployments(client *kubernetes.Clientset, logger nuclio.Logger, namespace string) ([]*jobs.DeploymentSpec, error) {
 
 	listOptions := meta_v1.ListOptions{
 		LabelSelector: NUCLIO_SELECTOR,
@@ -253,7 +255,7 @@ func ListDeployments(client *kubernetes.Clientset, logger nuclio.Logger, namespa
 
 	logger.DebugWith("Got deployments", "num", len(result.Items))
 
-	depList := []*jobs.Deployment{}
+	depList := []*jobs.DeploymentSpec{}
 	for _, deployment := range result.Items {
 		depList = append(depList, getDeployStruct(&deployment))
 	}

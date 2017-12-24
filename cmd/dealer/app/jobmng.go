@@ -124,13 +124,8 @@ func (jm *JobManager) Start() error {
 					req.ReturnChan <- &jobs.RespChanType{Err: nil, Object: list}
 
 				case jobs.RequestTypeJobUpdate:
-					job, err := jm.getJob(req.Namespace, req.Function, req.Name)
-					if err != nil {
-						req.ReturnChan <- &jobs.RespChanType{Err: err, Object: job}
-					} else {
-						err := jm.updateJob(job, req.Object.(*jobs.JobMessage))
-						req.ReturnChan <- &jobs.RespChanType{Err: err, Object: job}
-					}
+					job, err := jm.updateJob(req.Object.(*jobs.JobMessage))
+					req.ReturnChan <- &jobs.RespChanType{Err: err, Object: job}
 
 				case jobs.RequestTypeProcGet:
 					proc, ok := jm.Processes[jobs.ProcessKey(req.Name, req.Namespace)]
@@ -187,8 +182,8 @@ func (jm *JobManager) Start() error {
 					req.ReturnChan <- &jobs.RespChanType{Err: nil, Object: list}
 
 				case jobs.RequestTypeDeployUpdate:
-					dep := req.Object.(*jobs.Deployment)
-					dep, err := jm.DeployMap.UpdateDeployment(dep)
+					depSpec := req.Object.(*jobs.DeploymentSpec)
+					dep, err := jm.DeployMap.UpdateDeployment(depSpec)
 					if req.ReturnChan != nil {
 						req.ReturnChan <- &jobs.RespChanType{
 							Err: err, Object: dep.GetDeploymentState()}
@@ -299,32 +294,72 @@ func (jm *JobManager) InitJobs(namespace string) error {
 	return nil
 }
 
-// TODO: change to dep jobs
-func (jm *JobManager) removeJob(namespace, function, name string) error {
-
-	jm.Ctx.Logger.InfoWith("Removing a job", "name", name, "namespace", namespace, "function", function)
+func (jm *JobManager) findJob(namespace, function, name string) (*jobs.Job, *jobs.Deployment) {
 	deps := jm.DeployMap.GetAllDeployments(namespace, function, "")
 	for _, dep := range deps {
 		for _, job := range dep.GetJobs() {
 			if job.Name == name {
-				dep.RemoveJob(job, false)
-				return nil
+				return job, dep
 			}
 		}
 	}
+	return nil, nil
+}
 
-	jm.Ctx.Logger.WarnWith("Removing a job, job not found", "name", name, "namespace", namespace)
+// remove a Job manually
+func (jm *JobManager) removeJob(namespace, function, name string) error {
+
+	jm.Ctx.Logger.InfoWith("Removing a job", "name", name, "namespace", namespace, "function", function)
+	job, dep := jm.findJob(namespace, function, name)
+	if job != nil {
+		if job.FromDeployment() {
+			jm.Ctx.Logger.WarnWith("Cannot remove jobs that originate in function spec",
+				"function", function, "job", job.Name)
+			return fmt.Errorf("Cannot remove jobs that originate in function spec, update the function instead")
+		}
+
+		dep.RemoveJob(job, false)
+	} else {
+		jm.Ctx.Logger.WarnWith("Removing a job, job not found", "name", name, "namespace", namespace)
+	}
+
 	return nil
 }
 
 // TODO: change to update various runtime job params
-func (jm *JobManager) updateJob(oldJob, newjob *jobs.JobMessage) error {
+func (jm *JobManager) updateJob(newjob *jobs.JobMessage) (*jobs.JobMessage, error) {
 
 	// TODO: consider what need to allow in update and handle it (currently ignored)
 	// e.g. update MaxAllocation, Job to Version assosiation, Metadata, TotalTasks
-	jm.Ctx.Logger.InfoWith("Update a job", "old", oldJob, "new", newjob)
+	jm.Ctx.Logger.InfoWith("Update a job", "job", newjob)
+	job, dep := jm.findJob(newjob.Namespace, newjob.Function, newjob.Name)
 
-	return nil
+	if job != nil && !job.FromDeployment() {
+		if newjob.Disable != job.Disable {
+			jm.Ctx.Logger.DebugWith("job changed state", "function", newjob.Function, "job", newjob.Name, "disable", newjob.Disable)
+			job.Disable = newjob.Disable
+			job.NeedToSave()
+			jm.Ctx.SaveJobs([]*jobs.Job{job})
+			if newjob.Disable {
+				dep.SuspendJob(job)
+			} else {
+				err := dep.Rebalance()
+				if err != nil {
+					jm.Ctx.Logger.ErrorWith("Failed to rebalance in updateJobs", "deploy", dep.Name, "err", err)
+					return nil, err
+				}
+			}
+		}
+		return job.GetJobState(), nil
+
+	} else {
+		jm.Ctx.Logger.WarnWith("Job not found or from deployment, cannot update the job", "ns", newjob.Namespace,
+			"function", newjob.Function, "job", newjob.Name)
+		return nil, fmt.Errorf("Job not found or from deployment, cannot update the job")
+
+	}
+
+	return nil, nil
 }
 
 // remove process, triggered by k8s POD delete or API calls
