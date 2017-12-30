@@ -109,7 +109,17 @@ func ProcessKey(name, namespace string) string { return name + "." + namespace }
 
 func (p *Process) AsString() string {
 	// TODO: add jobs/tasks
-	return fmt.Sprintf("%s-%d", p.Name, p.State)
+	tasks := ""
+	for _, job := range p.jobs {
+		active:=0
+		for _, task := range job.tasks {
+			if task.state == TaskStateRunning || task.state == TaskStateAlloc {
+				active += 1
+			}
+		}
+		tasks += fmt.Sprintf("%s(%d) ", job.job.Name, active)
+	}
+	return fmt.Sprintf("%s-%d: %s", p.Name, p.State, tasks)
 }
 
 func (p *Process) GetDeployment() *Deployment {
@@ -476,12 +486,15 @@ func (p *Process) emulateProcess() {
 		}
 		msg.Jobs[jobName] = JobShort{TotalTasks: job.job.TotalTasks, Metadata: job.job.Metadata, Tasks: taskList}
 	}
-	p.logger.DebugWith("emulateProcess", "processor", p.Name, "jobs", p.jobs)
+	p.logger.DebugWith("emulateProcess", "processor", p.Name, "jobs", msg.Jobs)
 
 	go func() {
-		time.Sleep(time.Second)
-		p.ctx.SubmitReq(&RequestMessage{
-			Object: &msg, Type: RequestTypeProcUpdate})
+		time.Sleep(time.Millisecond)
+		body, _ := json.Marshal(msg)
+		resp := client.EmulatedResp(body)
+		p.ctx.ProcRespChannel <- resp
+		//p.ctx.SubmitReq(&RequestMessage{
+		//	Object: &msg, Type: RequestTypeProcUpdate})
 	}()
 
 }

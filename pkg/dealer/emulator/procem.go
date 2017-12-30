@@ -80,7 +80,7 @@ func main() {
 		if err != nil {
 			logger.ErrorWith("Failed to Unmarshal process resp", "body", string(resp.Body()), "err", err)
 		}
-		newEmulator.EmulateProcess(procMsg)
+		newEmulator.Proc.ProcessUpdates(procMsg)
 	}
 
 	c := make(chan os.Signal, 2)

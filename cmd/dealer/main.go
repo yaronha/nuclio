@@ -42,7 +42,7 @@ func run() error {
 
 	logger, _ := createLogger(*verbose)
 
-	dealer, err := app.NewJobManager(logger, &jobs.ManagerContextConfig{
+	dealer, err := app.NewDealer(logger, &jobs.ManagerContextConfig{
 		DisablePush: *nopush,
 		StorePath:   *spath,
 	})

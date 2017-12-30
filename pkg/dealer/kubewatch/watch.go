@@ -271,7 +271,7 @@ func ListPods(client *kubernetes.Clientset, logger nuclio.Logger, namespace stri
 		LabelSelector: NUCLIO_SELECTOR,
 	}
 
-	result, err := client.Core().Pods(namespace).List(listOptions)
+	result, err := client.CoreV1().Pods(namespace).List(listOptions)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to list pods")
 	}

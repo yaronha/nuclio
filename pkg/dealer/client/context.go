@@ -146,3 +146,9 @@ func (r *Response) Release() {
 func (r *Response) Body() []byte {
 	return r.response.Body()
 }
+
+func EmulatedResp(body []byte) *Response {
+	resp := fasthttp.Response{}
+	resp.SetBody(body)
+	return &Response{ response: &resp }
+}

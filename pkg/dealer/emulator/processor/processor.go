@@ -28,37 +28,21 @@ import (
 
 func NewProcessEmulator(logger nuclio.Logger, proc *jobs.ProcessMessage) (ProcessEmulator, error) {
 	newEmulator := ProcessEmulator{logger: logger}
-	newEmulator.proc = &LocalProcess{BaseProcess: proc.BaseProcess}
-	newEmulator.proc.jobs = map[string]jobs.JobShort{}
-	newEmulator.proc.State = jobs.ProcessStateReady
+	newEmulator.Proc = NewLocalProcess(logger, proc)
 	return newEmulator, nil
 }
 
 type ProcessEmulator struct {
 	logger nuclio.Logger
 	port   int
-	proc   *LocalProcess
-	//jobs       map[string]*jobs.Job
-}
-
-type LocalProcess struct {
-	jobs.BaseProcess
-	LastUpdate time.Time `json:"lastUpdate,omitempty"`
-	jobs       map[string]jobs.JobShort
-}
-
-// return an enriched process struct for API
-func (p *LocalProcess) GetProcessState() *jobs.ProcessMessage {
-	msg := jobs.ProcessMessage{BaseProcess: p.BaseProcess}
-	msg.Jobs = p.jobs
-	return &msg
+	Proc   *LocalProcess
 }
 
 // Start listener
 func (p *ProcessEmulator) Start() error {
 	r := chi.NewRouter()
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		procMsg := p.proc.GetProcessState()
+		procMsg := p.Proc.GetProcessState()
 		p.logger.DebugWith("Get proc", "proc", procMsg)
 
 		if err := render.Render(w, r, procMsg); err != nil {
@@ -71,8 +55,9 @@ func (p *ProcessEmulator) Start() error {
 		r.Post("/", p.eventUpdate)
 	})
 
-	fmt.Printf("Proc %s/%s Function: %s:%s - Listening on port: %d\n", p.proc.Namespace, p.proc.Name, p.proc.Function, p.proc.Version, p.proc.Port)
-	return http.ListenAndServe(fmt.Sprintf(":%d", p.proc.Port), r)
+	fmt.Printf("Proc %s/%s Function: %s:%s - Listening on port: %d\n", p.Proc.Namespace, p.Proc.Name,
+		p.Proc.Function, p.Proc.Version, p.Proc.Port)
+	return http.ListenAndServe(fmt.Sprintf(":%d", p.Proc.Port), r)
 }
 
 // update Event and respond with current state
@@ -85,7 +70,7 @@ func (p *ProcessEmulator) eventUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	p.logger.InfoWith("Update", "process", data)
-	msg, err := p.EmulateProcess(data)
+	msg, err := p.Proc.ProcessUpdates(data)
 
 	if err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
@@ -99,16 +84,39 @@ func (p *ProcessEmulator) eventUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Process update message
-func (p *ProcessEmulator) EmulateProcess(msg *jobs.ProcessMessage) (*jobs.ProcessMessage, error) {
 
-	respmsg := jobs.ProcessMessage{BaseProcess: p.proc.BaseProcess}
+func NewLocalProcess(logger nuclio.Logger, proc *jobs.ProcessMessage) *LocalProcess {
+	localProc := &LocalProcess{BaseProcess: proc.BaseProcess}
+	localProc.jobs = map[string]jobs.JobShort{}
+	localProc.State = jobs.ProcessStateReady
+	return localProc
+}
+
+type LocalProcess struct {
+	jobs.BaseProcess
+	logger      nuclio.Logger
+	LastUpdate  time.Time
+	jobs        map[string]jobs.JobShort
+}
+
+// return an enriched process struct for API
+func (p *LocalProcess) GetProcessState() *jobs.ProcessMessage {
+	msg := jobs.ProcessMessage{BaseProcess: p.BaseProcess}
+	msg.Jobs = p.jobs
+	return &msg
+}
+
+
+// Process update message
+func (p *LocalProcess) ProcessUpdates(msg *jobs.ProcessMessage) (*jobs.ProcessMessage, error) {
+
+	respmsg := jobs.ProcessMessage{BaseProcess: p.BaseProcess}
 	respmsg.Jobs = map[string]jobs.JobShort{}
 
 	for jobname, jobmsg := range msg.Jobs {
 
 		// Add new jobs if not found locally
-		job, ok := p.proc.jobs[jobname]
+		job, ok := p.jobs[jobname]
 		if !ok {
 			job = jobs.JobShort{TotalTasks: jobmsg.TotalTasks, Metadata: jobmsg.Metadata}
 			p.logger.DebugWith("Added new job", "name", jobname)
@@ -131,7 +139,7 @@ func (p *ProcessEmulator) EmulateProcess(msg *jobs.ProcessMessage) (*jobs.Proces
 		}
 
 		job.Tasks = localList
-		p.proc.jobs[jobname] = job
+		p.jobs[jobname] = job
 		respmsg.Jobs[jobname] = jobs.JobShort{TotalTasks: jobmsg.TotalTasks, Metadata: jobmsg.Metadata, Tasks: respList}
 	}
 
