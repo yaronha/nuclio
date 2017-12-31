@@ -105,6 +105,7 @@ const (
 	RequestTypeProcUpdate
 	RequestTypeProcHealth
 
+	RequestTypeDeployGet
 	RequestTypeDeployUpdate
 	RequestTypeDeployRemove
 	RequestTypeDeployList
@@ -119,6 +120,7 @@ type RequestMessage struct {
 	Namespace  string
 	Function   string // for jobs
 	Name       string
+	Version    string
 	Type       RequestType
 	Object     interface{}
 	ReturnChan chan *RespChanType

@@ -173,13 +173,20 @@ func (dl *Dealer) Start() error {
 					}
 
 				case jobs.RequestTypeProcList:
-					list := []*jobs.ProcessMessage{}
-					for _, p := range dl.Processes {
-						if req.Namespace == "" || req.Namespace == p.Namespace {
-							list = append(list, p.GetProcessState())
-						}
+					list, err := dl.listProcesses(req.Namespace, req.Function, req.Version)
+					req.ReturnChan <- &jobs.RespChanType{Err: err, Object: list}
+
+
+				case jobs.RequestTypeDeployGet:
+					dep := dl.DeployMap.FindDeployment(req.Namespace, req.Function, req.Version, true)
+					if dep == nil {
+						err := fmt.Errorf("Cant find deployment: ns=%s, function=%s, version=%s" , req.Namespace, req.Function, req.Version)
+						req.ReturnChan <- &jobs.RespChanType{ Err: err, Object: nil }
+					} else {
+						req.ReturnChan <- &jobs.RespChanType{
+							Err: err, Object: dep.GetDeploymentState()}
 					}
-					req.ReturnChan <- &jobs.RespChanType{Err: nil, Object: list}
+
 
 				case jobs.RequestTypeDeployUpdate:
 					depSpec := req.Object.(*jobs.DeploymentSpec)
@@ -188,6 +195,7 @@ func (dl *Dealer) Start() error {
 						req.ReturnChan <- &jobs.RespChanType{
 							Err: err, Object: dep.GetDeploymentState()}
 					}
+
 
 				case jobs.RequestTypeDeployList:
 					depList := []*jobs.DeploymentMessage{}
@@ -366,6 +374,31 @@ func (dl *Dealer) updateJob(newjob *jobs.JobMessage) (*jobs.JobMessage, error) {
 	}
 
 	return nil, nil
+}
+
+func (dl *Dealer) listProcesses(namespace, function, version string) ([]*jobs.ProcessMessage, error) {
+
+	list := []*jobs.ProcessMessage{}
+
+	if function == "" {
+
+		for _, p := range dl.Processes {
+			if namespace == "" || namespace == p.Namespace {
+				list = append(list, p.GetProcessState())
+			}
+		}
+
+		return list, nil
+	}
+
+	deps := dl.DeployMap.GetAllDeployments(namespace, function, version)
+	for _, dep := range deps {
+		for _, proc := range dep.GetProcs() {
+			list = append(list, proc.GetProcessState())
+		}
+	}
+
+	return list, nil
 }
 
 // remove process, triggered by k8s POD delete or API calls

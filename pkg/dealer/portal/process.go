@@ -74,10 +74,12 @@ func (pp *ProcPortal) deleteProcess(w http.ResponseWriter, r *http.Request) {
 func (pp *ProcPortal) listProcess(w http.ResponseWriter, r *http.Request) {
 
 	namespace := chi.URLParam(r, "namespace")
+	function  := chi.URLParam(r, "function")
+	version   := chi.URLParam(r, "version")
 	list := []render.Renderer{}
 
 	procList, err := pp.managerContext.SubmitReq(&jobs.RequestMessage{Name: "",
-		Namespace: namespace, Type: jobs.RequestTypeProcList})
+		Namespace: namespace, Function:function, Version:version, Type: jobs.RequestTypeProcList})
 
 	if err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))

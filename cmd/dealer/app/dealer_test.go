@@ -7,12 +7,19 @@ import (
 	"github.com/pkg/errors"
 	"github.com/nuclio/nuclio/pkg/dealer/jobs"
 	"time"
+	"fmt"
 )
 
 type testContext struct {
 	test     *testing.T
 	dealer   *Dealer
 	logger   nuclio.Logger
+	unique   int
+}
+
+func (tc *testContext) uniqueStr() string {
+	tc.unique++
+	return fmt.Sprintf("%04x", tc.unique)
 }
 
 func TestDealer_Start(t *testing.T) {
@@ -28,30 +35,20 @@ func TestDealer_Start(t *testing.T) {
 	dealer.Start()
 
 	fn := newFunc(&ctx, "fn1", "")
-	err = fn.updateDep(2, "", &jobs.BaseJob{Name:"st1",TotalTasks:5})
-	time.Sleep(time.Duration(50) * time.Millisecond)
+	fn.setJob("j1", &jobs.BaseJob{TotalTasks:5})
+	fn.setJob("j2", &jobs.BaseJob{TotalTasks:7})
 
-	err = fn.updateProc("p1", nil )
-	time.Sleep(time.Duration(50) * time.Millisecond)
+	fn.updateDep(3)
+	fn.procSum()
 
-	err = fn.updateProc("p2", nil )
-	time.Sleep(time.Duration(50) * time.Millisecond)
-	ctx.logger.DebugWith("proc", "proc", dealer.Processes["p1.default"].GetProcessState())
+	fn.setJob("j1", &jobs.BaseJob{TotalTasks:5, Disable:true})
+	fn.updateDep(3)
+	fn.procSum()
+	fn.updateDep(1)
 
-	err = fn.updateDep(2, "11", &jobs.BaseJob{Name:"st1",TotalTasks:5, Disable:true})
-	time.Sleep(time.Duration(50) * time.Millisecond)
-
-	err = fn.updateProc("p3", nil )
-	time.Sleep(time.Duration(50) * time.Millisecond)
-
-
-	fn.procSum("p1","p2", "p3")
-	err = fn.updateDep(2, "12", &jobs.BaseJob{Name:"st1",TotalTasks:5})
-	time.Sleep(time.Duration(50) * time.Millisecond)
-
-	dealer.removeProcess("p2", "default")
-	time.Sleep(time.Duration(50) * time.Millisecond)
-	fn.procSum("p1", "p3")
+	fn.procSum()
+	fn.updateDep(2)
+	fn.procSum()
 
 }
 
@@ -62,34 +59,85 @@ func newFunc(ctx *testContext, name, version string) *functionBase {
 		version = "latest"
 		alias = "latest"
 	}
-	return &functionBase{ctx:ctx, name:name, namespace:namespace, version:version, alias:alias}
+	return &functionBase{ctx:ctx, name:name, namespace:namespace, version:version, alias:alias, jobs: map[string]*jobs.BaseJob{}}
 }
 
 type functionBase struct {
-	ctx   *testContext
+	ctx        *testContext
 	name, namespace, version, alias string
+	jobs       map[string]*jobs.BaseJob
+	gen        int
+	lastScale  int
 }
+
+func waitMs(ms int) { time.Sleep(time.Duration(ms) * time.Millisecond) }
+
+func (fn *functionBase) setJob(name string, job *jobs.BaseJob) {
+	fn.gen++
+	job.Name = name
+	fn.jobs[name] = job
+	return
+}
+
 
 func (fn *functionBase) procSum(procs ...string) {
 	strList := []interface{}{}
-	for _, proc := range procs{
-		str := fn.ctx.dealer.Processes[jobs.ProcessKey(proc,fn.namespace)].AsString()
+	for _, proc := range fn.ctx.dealer.Processes {
+		str := proc.AsString()
 		strList = append(strList, str)
 	}
 	fn.ctx.logger.InfoWith("Process states: ", "procs", strList)
 }
 
-func (fn *functionBase) updateDep(procs int, funcgen string, triggers ...*jobs.BaseJob) error {
+func (fn *functionBase) updateDep(scale int) error {
+	triggers := []*jobs.BaseJob{}
+	for _, job := range fn.jobs {
+		triggers = append(triggers, job)
+	}
+
 	newDep := jobs.DeploymentSpec{BaseDeployment:jobs.BaseDeployment{
 		Name:"dep-"+fn.name+"-"+fn.version, Namespace:fn.namespace,
-		Function:fn.name,Version:fn.version, Alias:fn.alias, ExpectedProc:procs, FuncGen:funcgen},
+		Function:fn.name,Version:fn.version, Alias:fn.alias,
+		ExpectedProc:scale, FuncGen:fmt.Sprintf("%04x", fn.gen)},
 		Triggers:triggers}
+
 	dep, err := fn.ctx.dealer.Ctx.SubmitReq(&jobs.RequestMessage{
 		Object: &newDep, Type: jobs.RequestTypeDeployUpdate})
+
 	fn.ctx.logger.InfoWith("Updated dealer: ","dealer", dep)
 	checkErr(fn.ctx.test, err)
+
+	if err !=nil || scale == fn.lastScale {
+		return err
+	}
+
+	waitMs(50)
+	if scale > fn.lastScale {
+		for {
+			fn.lastScale++
+			fn.updateProc(fn.name + "-" + fn.ctx.uniqueStr(), nil)
+			if scale == fn.lastScale { break }
+		}
+	} else {
+		for {
+			fn.lastScale--
+			name := dep.(*jobs.DeploymentMessage).Processes[fn.lastScale]
+			_, err := fn.ctx.dealer.Ctx.SubmitReq(&jobs.RequestMessage{Namespace:fn.namespace, Name:name, Type:jobs.RequestTypeProcDel})
+			fn.ctx.logger.DebugWith("Del proc: ","proc", name, "err", err)
+			if scale == fn.lastScale { break }
+		}
+	}
+
+	waitMs(50)
 	return err
 }
+
+
+
+//dep, err := fn.ctx.dealer.Ctx.SubmitReq(&jobs.RequestMessage{
+//Namespace:fn.namespace, Function:fn.name, Version:fn.version, Type: jobs.RequestTypeDeployGet})
+//fn.ctx.logger.InfoWith("Updated dealer: ","dealer", dep, "err", err)
+
 
 func (fn *functionBase) updateProc(name string, jb map[string]jobs.JobShort) error {
 	msg := &jobs.ProcessMessage{
