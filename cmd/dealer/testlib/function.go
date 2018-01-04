@@ -37,7 +37,10 @@ func NewFunc(ctx *TestContext, name, version string) *functionBase {
 
 type functionBase struct {
 	ctx        *TestContext
-	name, namespace, version, alias string
+	name       string
+	namespace  string
+	version    string
+	alias      string
 	jobs       map[string]*jobs.BaseJob
 	gen        int
 	lastScale  int
@@ -56,12 +59,42 @@ func (fn *functionBase) RemoveJob(name string) {
 }
 
 
-func (fn *functionBase) ProcSum(procs ...string) {
-	strList := []interface{}{}
-	for _, proc := range fn.ctx.dealer.Processes {
-		str := proc.AsString()
+func (fn *functionBase) ProcSum() {
+	strList := []string{}
+	var totalActive, totalStop, procSum, procAvg, procMax int
+	procMin := 9999
+
+	procList, err := fn.ctx.dealer.Ctx.SubmitReq(&jobs.RequestMessage{Name: "",
+		Namespace: fn.namespace, Function:fn.name, Version:fn.version, Type: jobs.RequestTypeProcList})
+
+	CheckErr(fn.ctx.test, err)
+
+	for _, proc := range procList.([]*jobs.ProcessMessage) {
+
+		tasks := ""
+		procSum = 0
+		for jobName, job := range proc.Jobs {
+			active:=0
+			for _, task := range job.Tasks {
+				if task.State == jobs.TaskStateRunning || task.State == jobs.TaskStateAlloc {
+					active++
+				}
+				if task.State == jobs.TaskStateStopping {
+					totalStop++
+				}
+			}
+			procSum += active
+
+			tasks += fmt.Sprintf("%s(%d) ", jobName, active)
+		}
+
+		if procSum > procMax { procMax = procSum }
+		if procSum < procMin { procMin = procSum }
+		totalActive += procSum
+		str := fmt.Sprintf("%s-%d: %s", proc.Name, proc.State, tasks)
 		strList = append(strList, str)
 	}
+	procAvg = procSum / len(procList.([]*jobs.ProcessMessage))
 	fn.ctx.logger.InfoWith("Process states: ", "procs", strList)
 }
 

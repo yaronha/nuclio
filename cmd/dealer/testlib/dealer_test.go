@@ -9,17 +9,6 @@ import (
 	"github.com/nuclio/nuclio/cmd/dealer/app"
 )
 
-//type testContext struct {
-//	test     *testing.T
-//	dealer   *Dealer
-//	logger   nuclio.Logger
-//	unique   int
-//}
-//
-//func (tc *testContext) uniqueStr() string {
-//	tc.unique++
-//	return fmt.Sprintf("%04x", tc.unique)
-//}
 
 func TestDealer_Start(t *testing.T) {
 	logger, _ := createLogger(false)

@@ -108,7 +108,6 @@ func NewProcess(logger nuclio.Logger, context *ManagerContext, newProc *ProcessM
 func ProcessKey(name, namespace string) string { return name + "." + namespace }
 
 func (p *Process) AsString() string {
-	// TODO: add jobs/tasks
 	tasks := ""
 	for _, job := range p.jobs {
 		active:=0
