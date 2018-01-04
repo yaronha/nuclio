@@ -66,7 +66,7 @@ func (g *golang) DetectFunctionHandlers(functionPath string) ([]string, error) {
 		return nil, errors.Wrapf(err, "Expected one package, found %d", len(packages))
 	}
 
-	return []string{handlers[0]}, nil
+	return handlers[:1], nil
 }
 
 // GetProcessorImageObjectPaths returns a map of objects the runtime needs to copy into the processor image
@@ -95,11 +95,6 @@ func (g *golang) OnAfterStagingDirCreated(stagingDir string) error {
 	}
 
 	return nil
-}
-
-// GetExtension returns the source extension of the runtime (e.g. .go)
-func (g *golang) GetExtension() string {
-	return "go"
 }
 
 // GetName returns the name of the runtime, including version if applicable
@@ -173,9 +168,6 @@ func (g *golang) buildHandlerPlugin(stagingDir string) error {
 		if err != nil {
 			return errors.Wrap(err, "Failed to read build log contents")
 		}
-
-		// log the error
-		g.Logger.ErrorWith("Failed to build function", "error", string(handlerBuildLogContents))
 
 		return errors.Errorf("Failed to build function:\n%s", string(handlerBuildLogContents))
 	}

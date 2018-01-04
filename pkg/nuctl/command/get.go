@@ -46,7 +46,7 @@ func newGetCommandeer(rootCommandeer *RootCommandeer) *getCommandeer {
 
 	cmd := &cobra.Command{
 		Use:   "get",
-		Short: "Display one or more resources",
+		Short: "Display resource information",
 	}
 
 	cmd.AddCommand(
@@ -71,7 +71,7 @@ func newGetFunctionCommandeer(getCommandeer *getCommandeer) *getFunctionCommande
 	cmd := &cobra.Command{
 		Use:     "function [name[:version]]",
 		Aliases: []string{"fu"},
-		Short:   "Display one or more functions",
+		Short:   "Display function information",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			commandeer.getOptions.Namespace = getCommandeer.rootCommandeer.namespace
 
@@ -102,8 +102,8 @@ func newGetFunctionCommandeer(getCommandeer *getCommandeer) *getFunctionCommande
 		},
 	}
 
-	cmd.PersistentFlags().StringVarP(&commandeer.getOptions.Labels, "labels", "l", "", "Label selector (lbl1=val1,lbl2=val2..)")
-	cmd.PersistentFlags().StringVarP(&commandeer.getOptions.Format, "output", "o", outputFormatText, "Output format - text|wide|yaml|json")
+	cmd.PersistentFlags().StringVarP(&commandeer.getOptions.Labels, "labels", "l", "", "Function labels (lbl1=val1[,lbl2=val2,...])")
+	cmd.PersistentFlags().StringVarP(&commandeer.getOptions.Format, "output", "o", outputFormatText, "Output format - \"text\", \"wide\", \"yaml\", or \"json\"")
 	cmd.PersistentFlags().BoolVarP(&commandeer.getOptions.Watch, "watch", "w", false, "Watch for changes")
 
 	commandeer.cmd = cmd
@@ -162,10 +162,10 @@ func (g *getFunctionCommandeer) renderFunctions(functions []platform.Function, f
 		}
 
 		rendererInstance.RenderTable(header, functionRecords)
-		//case "yaml":
-		//	rendererInstance.RenderYAML(functions)
-		//case "json":
-		//	rendererInstance.RenderJSON(functions)
+	case "yaml":
+		g.renderFunctionConfig(functions, rendererInstance.RenderYAML)
+	case "json":
+		g.renderFunctionConfig(functions, rendererInstance.RenderJSON)
 	}
 
 	return nil
@@ -193,4 +193,15 @@ func (g *getFunctionCommandeer) formatFunctionIngresses(function platform.Functi
 		function.GetVersion())
 
 	return formattedIngresses
+}
+
+func (g *getFunctionCommandeer) renderFunctionConfig(functions []platform.Function, renderer func(interface{}) error) error {
+	for _, function := range functions {
+		if err := renderer(function.GetConfig()); err != nil {
+			return errors.Wrap(err, "Failed to render function config")
+		}
+
+	}
+
+	return nil
 }

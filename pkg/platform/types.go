@@ -1,3 +1,19 @@
+/*
+Copyright 2017 The Nuclio Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package platform
 
 // use k8s structure definitions for now. In the future, duplicate them for cleanliness
@@ -36,7 +52,8 @@ type BuildResult struct {
 // DeployResult holds the results of a deploy
 type DeployResult struct {
 	BuildResult
-	Port int
+	Port        int
+	ContainerID string
 }
 
 // GetOptions is the base for all platform get options

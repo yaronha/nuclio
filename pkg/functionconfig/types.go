@@ -1,6 +1,26 @@
+/*
+Copyright 2017 The Nuclio Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package functionconfig
 
-import "k8s.io/api/core/v1"
+import (
+	"strings"
+
+	"k8s.io/api/core/v1"
+)
 
 // DataBinding holds configuration for a databinding
 type DataBinding struct {
@@ -97,10 +117,12 @@ type Build struct {
 	OutputType         string            `json:"outputType,omitempty"`
 	NuclioSourceDir    string            `json:"nuclioSourceDir,omitempty"`
 	NuclioSourceURL    string            `json:"nuclioSourceURL,omitempty"`
+	TempDir            string            `json:"tempDir,omitempty"`
 	Registry           string            `json:"registry,omitempty"`
 	ImageName          string            `json:"imageName,omitempty"`
 	ImageVersion       string            `json:"imageVersion,omitempty"`
 	NoBaseImagesPull   bool              `json:"noBaseImagesPull,omitempty"`
+	NoCleanup          bool              `json:"noCleanup,omitempty"`
 	BaseImageName      string            `json:"baseImageName,omitempty"`
 	Commands           []string          `json:"commands,omitempty"`
 	ScriptPaths        []string          `json:"scriptPaths,omitempty"`
@@ -109,37 +131,51 @@ type Build struct {
 
 // Spec holds all parameters related to a function's configuration
 type Spec struct {
-	Description  string                  `json:"description,omitempty"`
-	Disabled     bool                    `json:"disable,omitempty"`
-	Publish      bool                    `json:"publish,omitempty"`
-	Handler      string                  `json:"handler,omitempty"`
-	Runtime      string                  `json:"runtime,omitempty"`
-	Env          []v1.EnvVar             `json:"env,omitempty"`
-	Resources    v1.ResourceRequirements `json:"resources,omitempty"`
-	ImageName    string                  `json:"image,omitempty"`
-	HTTPPort     int                     `json:"httpPort,omitempty"`
-	Replicas     int                     `json:"replicas,omitempty"`
-	MinReplicas  int                     `json:"minReplicas,omitempty"`
-	MaxReplicas  int                     `json:"maxReplicas,omitempty"`
-	DataBindings map[string]DataBinding  `json:"dataBindings,omitempty"`
-	Triggers     map[string]Trigger      `json:"triggers,omitempty"`
-	Version      int                     `json:"version,omitempty"`
-	Alias        string                  `json:"alias,omitempty"`
-	Build        Build                   `json:"build,omitempty"`
-	RunRegistry  string                  `json:"runRegistry,omitempty"`
+	Description       string                  `json:"description,omitempty"`
+	Disabled          bool                    `json:"disable,omitempty"`
+	Publish           bool                    `json:"publish,omitempty"`
+	Handler           string                  `json:"handler,omitempty"`
+	Runtime           string                  `json:"runtime,omitempty"`
+	Env               []v1.EnvVar             `json:"env,omitempty"`
+	Resources         v1.ResourceRequirements `json:"resources,omitempty"`
+	ImageName         string                  `json:"image,omitempty"`
+	HTTPPort          int                     `json:"httpPort,omitempty"`
+	Replicas          int                     `json:"replicas,omitempty"`
+	MinReplicas       int                     `json:"minReplicas,omitempty"`
+	MaxReplicas       int                     `json:"maxReplicas,omitempty"`
+	DataBindings      map[string]DataBinding  `json:"dataBindings,omitempty"`
+	Triggers          map[string]Trigger      `json:"triggers,omitempty"`
+	Version           int                     `json:"version,omitempty"`
+	Alias             string                  `json:"alias,omitempty"`
+	Build             Build                   `json:"build,omitempty"`
+	RunRegistry       string                  `json:"runRegistry,omitempty"`
+	RuntimeAttributes map[string]interface{}  `json:"runtimeAttributes,omitempty"`
+}
+
+func (s *Spec) GetRuntimeNameAndVersion() (string, string) {
+	runtimeAndVersion := strings.Split(s.Runtime, ":")
+
+	switch len(runtimeAndVersion) {
+	case 1:
+		return runtimeAndVersion[0], ""
+	case 2:
+		return runtimeAndVersion[0], runtimeAndVersion[1]
+	default:
+		return "", ""
+	}
 }
 
 // Meta identifies a function
 type Meta struct {
-	Name        string `json:"name"`
-	Namespace   string `json:"namespace"`
-	Labels      map[string]string
-	Annotations map[string]string
+	Name        string            `json:"name,omitempty"`
+	Namespace   string            `json:"namespace,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty"`
+	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
 // Config holds the configuration of a function - meta and spec
 type Config struct {
-	Meta Meta
+	Meta Meta `json:"metadata,omitempty"`
 	Spec Spec `json:"spec,omitempty"`
 }
 

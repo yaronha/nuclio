@@ -1,6 +1,23 @@
+/*
+Copyright 2017 The Nuclio Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package local
 
 import (
+	"encoding/json"
 	"io/ioutil"
 	"net"
 	"path"
@@ -12,6 +29,7 @@ import (
 	"github.com/nuclio/nuclio/pkg/functionconfig"
 	"github.com/nuclio/nuclio/pkg/platform"
 	"github.com/nuclio/nuclio/pkg/platform/abstract"
+	"github.com/nuclio/nuclio/pkg/processor"
 	"github.com/nuclio/nuclio/pkg/processor/config"
 
 	"github.com/nuclio/nuclio-sdk"
@@ -42,7 +60,7 @@ func NewPlatform(parentLogger nuclio.Logger) (*Platform, error) {
 	}
 
 	// create a docker client
-	if newPlatform.dockerClient, err = dockerclient.NewShellClient(newPlatform.Logger); err != nil {
+	if newPlatform.dockerClient, err = dockerclient.NewShellClient(newPlatform.Logger, nil); err != nil {
 		return nil, errors.Wrap(err, "Failed to create docker client")
 	}
 
@@ -86,6 +104,20 @@ func (p *Platform) GetFunctions(getOptions *platform.GetOptions) ([]platform.Fun
 	var functions []platform.Function
 	for _, containerInfo := range containersInfo {
 		httpPort, _ := strconv.Atoi(containerInfo.HostConfig.PortBindings["8080/tcp"][0].HostPort)
+		var functionSpec functionconfig.Spec
+
+		// get the JSON encoded spec
+		encodedFunctionSpec, encodedFunctionSpecFound := containerInfo.Config.Labels["nuclio-function-spec"]
+		if encodedFunctionSpecFound {
+
+			// try to unmarshal the spec
+			json.Unmarshal([]byte(encodedFunctionSpec), &functionSpec)
+		}
+
+		functionSpec.Version = -1
+		functionSpec.HTTPPort = httpPort
+
+		delete(containerInfo.Config.Labels, "nuclio-function-spec")
 
 		function, err := newFunction(p.Logger,
 			p,
@@ -95,10 +127,7 @@ func (p *Platform) GetFunctions(getOptions *platform.GetOptions) ([]platform.Fun
 					Namespace: "n/a",
 					Labels:    containerInfo.Config.Labels,
 				},
-				Spec: functionconfig.Spec{
-					Version:  -1,
-					HTTPPort: httpPort,
-				},
+				Spec: functionSpec,
 			}, &containerInfo)
 
 		if err != nil {
@@ -197,6 +226,7 @@ func (p *Platform) deployFunction(deployOptions *platform.DeployOptions) (*platf
 		"nuclio-platform":      "local",
 		"nuclio-namespace":     deployOptions.FunctionConfig.Meta.Namespace,
 		"nuclio-function-name": deployOptions.FunctionConfig.Meta.Name,
+		"nuclio-function-spec": p.encodeFunctionSpec(&deployOptions.FunctionConfig.Spec),
 	}
 
 	for labelName, labelValue := range deployOptions.FunctionConfig.Meta.Labels {
@@ -215,7 +245,7 @@ func (p *Platform) deployFunction(deployOptions *platform.DeployOptions) (*platf
 	}
 
 	// run the docker image
-	_, err = p.dockerClient.RunContainer(deployOptions.FunctionConfig.Spec.ImageName, &dockerclient.RunOptions{
+	containerID, err := p.dockerClient.RunContainer(deployOptions.FunctionConfig.Spec.ImageName, &dockerclient.RunOptions{
 		Ports:  map[int]int{freeLocalPort: 8080},
 		Env:    envMap,
 		Labels: labels,
@@ -229,13 +259,17 @@ func (p *Platform) deployFunction(deployOptions *platform.DeployOptions) (*platf
 	}
 
 	return &platform.DeployResult{
-		Port: freeLocalPort,
+		Port:        freeLocalPort,
+		ContainerID: containerID,
 	}, nil
 }
 
 func (p *Platform) createProcessorConfig(deployOptions *platform.DeployOptions) (string, error) {
 
-	configWriter := config.NewWriter()
+	configWriter, err := processorconfig.NewWriter()
+	if err != nil {
+		return "", errors.Wrap(err, "Failed to create processor configuration writer")
+	}
 
 	// must specify "/tmp" here so that it's available on docker for mac
 	processorConfigFile, err := ioutil.TempFile("/tmp", "processor-config-")
@@ -245,12 +279,9 @@ func (p *Platform) createProcessorConfig(deployOptions *platform.DeployOptions) 
 
 	defer processorConfigFile.Close()
 
-	if err = configWriter.Write(processorConfigFile,
-		deployOptions.FunctionConfig.Spec.Handler,
-		deployOptions.FunctionConfig.Spec.Runtime,
-		"debug",
-		deployOptions.FunctionConfig.Spec.DataBindings,
-		deployOptions.FunctionConfig.Spec.Triggers); err != nil {
+	if err = configWriter.Write(processorConfigFile, &processor.Configuration{
+		Config: deployOptions.FunctionConfig,
+	}); err != nil {
 		return "", errors.Wrap(err, "Failed to write processor config")
 	}
 
@@ -266,4 +297,10 @@ func (p *Platform) createProcessorConfig(deployOptions *platform.DeployOptions) 
 	p.Logger.DebugWith("Wrote processor configuration file", "contents", string(processorConfigContents))
 
 	return processorConfigFile.Name(), nil
+}
+
+func (p *Platform) encodeFunctionSpec(spec *functionconfig.Spec) string {
+	encodedFunctionSpec, _ := json.Marshal(spec)
+
+	return string(encodedFunctionSpec)
 }

@@ -61,6 +61,8 @@ func (suite *TestSuite) TestOutputs() {
 	deployOptions.FunctionConfig.Spec.Handler = "outputter:handler"
 
 	suite.DeployFunction(deployOptions, func(deployResult *platform.DeployResult) bool {
+		err := suite.WaitForContainer(deployResult.Port)
+		suite.Require().NoError(err, "Can't reach container on port %d", deployResult.Port)
 
 		testRequests := []httpsuite.Request{
 			{
@@ -180,12 +182,20 @@ func (suite *TestSuite) TestOutputs() {
 				ExpectedResponseStatusCode: &statusOK,
 			},
 			{
-				// function should error
+				Name:                       "error",
 				RequestBody:                "return_error",
 				RequestLogLevel:            &logLevelWarn,
 				ExpectedResponseHeaders:    headersContentTypeTextPlain,
 				ExpectedResponseStatusCode: &statusInternalError,
 				ExpectedResponseBody:       regexp.MustCompile("some error"),
+			},
+			{
+				Name:                       "binary",
+				RequestMethod:              "POST",
+				RequestBody:                "return_binary",
+				RequestLogLevel:            &logLevelWarn,
+				ExpectedResponseBody:       []byte("hello"),
+				ExpectedResponseStatusCode: &statusOK,
 			},
 		}
 

@@ -25,6 +25,7 @@ import (
 	"github.com/nuclio/nuclio/pkg/errors"
 	"github.com/nuclio/nuclio/pkg/functionconfig"
 	"github.com/nuclio/nuclio/pkg/platform/kube/functioncr"
+	"github.com/nuclio/nuclio/pkg/processor"
 	"github.com/nuclio/nuclio/pkg/processor/config"
 
 	"github.com/nuclio/nuclio-sdk"
@@ -637,7 +638,7 @@ func (c *Client) serializeFunctionJSON(function *functioncr.Function) (string, e
 		return "", errors.Wrap(err, "Failed to compact JSON")
 	}
 
-	return string(pbody.Bytes()), nil
+	return pbody.String(), nil
 }
 
 func (c *Client) populateServiceSpec(labels map[string]string,
@@ -737,16 +738,19 @@ func (c *Client) populateConfigMap(labels map[string]string,
 
 	// create a processor configMap writer
 	// TODO: abstract this so that controller isn't bound to a processor?
-	configWriter := config.NewWriter()
+	configWriter, err := processorconfig.NewWriter()
+	if err != nil {
+		return errors.Wrap(err, "Failed to create processor configuration writer")
+	}
 
 	// create configMap contents - generate a processor configuration based on the function CR
 	configMapContents := bytes.Buffer{}
-	if err := configWriter.Write(&configMapContents,
-		function.Spec.Handler,
-		function.Spec.Runtime,
-		"debug",
-		function.Spec.DataBindings,
-		function.Spec.Triggers); err != nil {
+
+	if err := configWriter.Write(&configMapContents, &processor.Configuration{
+		Config: functionconfig.Config{
+			Spec: function.Spec,
+		},
+	}); err != nil {
 
 		return errors.Wrap(err, "Failed to write configuration")
 	}

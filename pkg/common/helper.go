@@ -22,19 +22,13 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unsafe"
 
 	"github.com/nuclio/nuclio/pkg/errors"
 
 	"github.com/spf13/viper"
 )
 
-// ByteArrayToString converts a byte array to a string
-func ByteArrayToString(b []byte) string {
-	return *(*string)(unsafe.Pointer(&b))
-}
-
-// StringToStringMap converts a map of a: x, b: y to a string in the form of "a=x,b=y"
+// StringMapToString converts a map of a: x, b: y to a string in the form of "a=x,b=y"
 func StringMapToString(source map[string]string) string {
 	list := []string{}
 
@@ -181,4 +175,15 @@ func MapInterfaceInterfaceToMapStringInterface(mapInterfaceInterface map[interfa
 	}
 
 	return stringInterfaceMap
+}
+
+// MapToSlice converts {key1: val1, key2: val2 ...} to [key1, val1, key2, val2 ...]
+func MapToSlice(m map[string]interface{}) []interface{} {
+	out := make([]interface{}, 0, len(m)*2)
+	for key, value := range m {
+		out = append(out, key)
+		out = append(out, value)
+	}
+
+	return out
 }
