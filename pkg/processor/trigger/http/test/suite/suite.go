@@ -89,6 +89,7 @@ func (suite *TestSuite) DeployFunctionAndRequest(deployOptions *platform.DeployO
 	}
 
 	return suite.DeployFunction(deployOptions, func(deployResult *platform.DeployResult) bool {
+		suite.WaitForContainer(deployResult.Port)
 
 		// modify request port to that of the deployed
 		request.RequestPort = deployResult.Port
@@ -238,7 +239,7 @@ func (suite *TestSuite) WaitForContainer(port int) error {
 	url := fmt.Sprintf("http://localhost:%d", port)
 	var err error
 
-	for time.Now().Sub(start) <= defaultContainerTimeout {
+	for time.Since(start) <= defaultContainerTimeout {
 		_, err = http.Get(url)
 		if err == nil {
 			break

@@ -80,7 +80,7 @@ func newBuildCommandeer(rootCommandeer *RootCommandeer) *buildCommandeer {
 	return commandeer
 }
 
-func addBuildFlags(cmd *cobra.Command, config *functionconfig.Config, commands *stringSliceFlag) {
+func addBuildFlags(cmd *cobra.Command, config *functionconfig.Config, commands *stringSliceFlag) { // nolint
 	cmd.Flags().StringVarP(&config.Spec.Build.Path, "path", "p", "", "Path to the function's source code")
 	cmd.Flags().StringVarP(&config.Spec.Build.FunctionConfigPath, "file", "f", "", "Path to a function-configuration file")
 	cmd.Flags().StringVarP(&config.Spec.Build.ImageName, "image", "i", "", "Name of a Docker image (default - the function name)")
@@ -92,6 +92,7 @@ func addBuildFlags(cmd *cobra.Command, config *functionconfig.Config, commands *
 	cmd.Flags().StringVarP(&config.Spec.Runtime, "runtime", "", "", "Runtime (for example, \"golang\", \"golang:1.8\", \"python:2.7\")")
 	cmd.Flags().StringVarP(&config.Spec.Handler, "handler", "", "", "Name of a function handler")
 	cmd.Flags().BoolVarP(&config.Spec.Build.NoBaseImagesPull, "no-pull", "", false, "Don't pull base images - use local versions")
+	cmd.Flags().BoolVarP(&config.Spec.Build.NoCleanup, "no-cleanup", "", false, "Don't clean up temporary directories")
 	cmd.Flags().StringVarP(&config.Spec.Build.BaseImageName, "base-image", "", "", "Name of the base image (default - per-runtime default)")
 	cmd.Flags().Var(commands, "build-command", "Commands to run when building the processor image")
 }

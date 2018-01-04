@@ -18,10 +18,12 @@ package processorsuite
 
 import (
 	"fmt"
+	"io/ioutil"
 	"os"
 	"path"
 	"time"
 
+	"github.com/nuclio/nuclio/pkg/common"
 	"github.com/nuclio/nuclio/pkg/dockerclient"
 	"github.com/nuclio/nuclio/pkg/functionconfig"
 	"github.com/nuclio/nuclio/pkg/platform"
@@ -32,6 +34,10 @@ import (
 	"github.com/nuclio/nuclio-sdk"
 	"github.com/rs/xid"
 	"github.com/stretchr/testify/suite"
+)
+
+const (
+	keepDockerEnvKey = "NUCLIO_TEST_KEEP_DOCKER"
 )
 
 type RunOptions struct {
@@ -50,6 +56,8 @@ type TestSuite struct {
 	Runtime      string
 	FunctionDir  string
 	containerID  string
+	TempDir      string
+	CleanupTemp  bool
 }
 
 // SetupSuite is called for suite setup
@@ -67,7 +75,7 @@ func (suite *TestSuite) SetupSuite() {
 	suite.Logger, err = nucliozap.NewNuclioZapTest("test")
 	suite.Require().NoError(err)
 
-	suite.DockerClient, err = dockerclient.NewShellClient(suite.Logger)
+	suite.DockerClient, err = dockerclient.NewShellClient(suite.Logger, nil)
 	suite.Require().NoError(err)
 
 	suite.Platform, err = local.NewPlatform(suite.Logger)
@@ -97,7 +105,13 @@ func (suite *TestSuite) TearDownTest() {
 			}
 		}
 
-		suite.DockerClient.RemoveContainer(suite.containerID)
+		if os.Getenv(keepDockerEnvKey) == "" {
+			suite.DockerClient.RemoveContainer(suite.containerID)
+		}
+	}
+
+	if suite.CleanupTemp && common.FileExists(suite.TempDir) {
+		suite.Failf("", "Temporary dir %s was not cleaned", suite.TempDir)
 	}
 }
 
@@ -110,12 +124,17 @@ func (suite *TestSuite) DeployFunction(deployOptions *platform.DeployOptions,
 	deployOptions.FunctionConfig.Spec.Build.NuclioSourceDir = suite.GetNuclioSourceDir()
 	deployOptions.FunctionConfig.Spec.Build.NoBaseImagesPull = true
 
+	// Does the test call for cleaning up the temp dir, and thus needs to check this on teardown
+	suite.CleanupTemp = !deployOptions.FunctionConfig.Spec.Build.NoCleanup
+
 	// deploy the function
 	deployResult, err := suite.Platform.DeployFunction(deployOptions)
 	suite.Require().NoError(err)
 
 	// remove the image when we're done
-	defer suite.DockerClient.RemoveImage(deployResult.ImageName)
+	if os.Getenv(keepDockerEnvKey) == "" {
+		defer suite.DockerClient.RemoveImage(deployResult.ImageName)
+	}
 
 	// give the container some time - after 10 seconds, give up
 	deadline := time.Now().Add(10 * time.Second)
@@ -170,6 +189,9 @@ func (suite *TestSuite) GetDeployOptions(functionName string, functionPath strin
 	deployOptions.FunctionConfig.Spec.Runtime = suite.Runtime
 	deployOptions.FunctionConfig.Spec.Build.Path = functionPath
 
+	suite.TempDir = suite.createTempDir()
+	deployOptions.FunctionConfig.Spec.Build.TempDir = suite.TempDir
+
 	return deployOptions
 }
 
@@ -181,4 +203,13 @@ func (suite *TestSuite) GetFunctionPath(functionRelativePath ...string) string {
 	functionPath = append(functionPath, functionRelativePath...)
 
 	return path.Join(functionPath...)
+}
+
+func (suite *TestSuite) createTempDir() string {
+	tempDir, err := ioutil.TempDir("", "build-test-"+suite.TestID)
+	if err != nil {
+		suite.FailNowf("Failed to create temporary dir %s for test %s", suite.TempDir, suite.TestID)
+	}
+
+	return tempDir
 }
