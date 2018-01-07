@@ -1,0 +1,43 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: http-echo
+  labels:
+    app: http-echo
+  namespace: default
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: http-echo
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+      - name: http-echo
+        image: gcr.io/google_containers/echoserver:1.4
+        ports:
+        - containerPort: 8080
+        resources:
+          limits:
+            cpu: 10m
+            memory: 20Mi
+          requests:
+            cpu: 10m
+            memory: 20Mi
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: http-echo
+  namespace: default
+  labels:
+    app: http-echo
+spec:
+  ports:
+  - port: 80
+    targetPort: 8080
+  selector:
+    app: http-echo
