@@ -31,7 +31,8 @@ func getFuncKey(namespace, name, version string) string {
 
 type FunctionBase struct {
 	Namespace     string
-	Name          string
+	CRName        string
+	Function      string
 	Version       string
 	Ingresses     []functionconfig.Ingress
 	CanScaledown  bool    // can this function be scaled down?  (if it only has HTTP triggers)
@@ -67,15 +68,10 @@ func (fn *FunctionRecord) IsReady() bool {
 	return !fn.Disabled && (len(fn.endPoints) > 0)
 }
 
-func (fn *FunctionRecord) deferRequest(request *LookupRequest) {
-	fn.requests = append(fn.requests, request)
-	// TODO:
-}
-
 func (fn *FunctionRecord) releaseRequests() {
 
 	for _, request := range fn.requests {
-		request.ReturnChan <- &LookupResponse{DestURL: fn.getFunctionURL(), DestFunction: fn.Name + ":" + fn.Version}
+		request.ReturnChan <- &LookupResponse{DestURL: fn.getFunctionURL(), DestFunction: fn.Function + ":" + fn.Version}
 	}
 
 	fn.requests = []*LookupRequest{}

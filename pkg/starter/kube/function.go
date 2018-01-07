@@ -3,7 +3,6 @@ package kube
 import (
 	"github.com/nuclio/nuclio/pkg/platform/kube/functioncr"
 	"github.com/pkg/errors"
-	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"github.com/nuclio/nuclio/pkg/functionconfig"
 	"github.com/nuclio/nuclio/pkg/starter/core"
 )
@@ -23,8 +22,29 @@ func (fi *functionIfc) Get(name string) (*functioncr.Function, error) {
 	return function, err
 }
 
-func (fi *functionIfc) Disable(name string, state bool) error {
-	function, err := fi.kc.functionCR.Get(fi.kc.namespace, name)
+func (fi *functionIfc) Watch() (chan functioncr.Change, error) {
+
+	changeChan := make(chan functioncr.Change, 100)
+	_, err := fi.kc.functionCR.WatchForChanges(fi.kc.namespace, changeChan)
+	fi.kc.logger.Debug("Started function watch")
+
+	return changeChan, err
+}
+
+func (fi *functionIfc) FuncCRtoFunction(fn *functioncr.Function) *core.FunctionBase {
+
+	canScaledown := fi.onlyHttpTriggers(fn) && (fn.Spec.MinReplicas == 0)
+	function := core.FunctionBase{
+		Namespace: fn.Namespace, Function: fn.Labels["name"], CRName: fn.Name,
+		Version: fn.Labels["version"], Gen: fn.ResourceVersion,
+		Disabled: fn.Spec.Disabled, Ingresses: fi.parseTriggers(fn), CanScaledown: canScaledown,
+	}
+
+	return &function
+}
+
+func (fi *functionIfc) Disable(crName string, state bool) error {
+	function, err := fi.kc.functionCR.Get(fi.kc.namespace, crName)
 	fi.kc.logger.DebugWith("Disable function", "fn", function)
 
 	function.Spec.Disabled = state
@@ -37,28 +57,6 @@ func (fi *functionIfc) Disable(name string, state bool) error {
 	return nil
 }
 
-func (fi *functionIfc) LoadFunctions() error {
-
-	opts := meta_v1.ListOptions{
-		//LabelSelector: NUCLIO_SELECTOR,
-	}
-
-	functions, err := fi.kc.functionCR.List(fi.kc.namespace, &opts)
-	if err != nil {
-		return errors.Wrap(err, "Failed to list functions")
-	}
-
-	for _, fn := range functions.Items {
-		canScaledown := fi.onlyHttpTriggers(&fn) && (fn.Spec.MinReplicas == 0)
-		function := core.FunctionBase{
-			Namespace: fn.Namespace, Name:fn.Name, Version: fn.Labels["version"], Gen: fn.ResourceVersion,
-			Disabled: fn.Spec.Disabled, Ingresses: fi.parseTriggers(&fn), CanScaledown: canScaledown,
-		}
-		fi.kc.reqChannel <- &core.AsyncRequests{ Type: core.RequestTypeUpdateFunction, Data: &function}
-	}
-
-	return nil
-}
 
 func (fi *functionIfc) parseTriggers(function *functioncr.Function) []functionconfig.Ingress {
 	allPaths := []functionconfig.Ingress{}

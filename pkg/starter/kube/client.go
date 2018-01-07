@@ -9,6 +9,11 @@ import (
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"github.com/pkg/errors"
 	"github.com/nuclio/nuclio/pkg/starter/core"
+	"k8s.io/apimachinery/pkg/watch"
+	"time"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/api/core/v1"
 )
 
 const NUCLIO_SELECTOR = "serverless=nuclio"
@@ -62,38 +67,61 @@ func (kc *kubeClient) newClientConf() error {
 	return nil
 }
 
-func (kc *kubeClient) Start() error {
 
-	return nil
+func (kc *kubeClient) processEP(ep *v1.Endpoints) {
+
+	epItem := core.FunctionEndPoints{Namespace:ep.Namespace, Name:ep.Labels["name"], Version:ep.Labels["version"]}
+	ips := []string{}
+	port := 8080
+	epItem.APIPort = port
+	for _, subset := range ep.Subsets {
+		for _, addr := range subset.Addresses {
+			ips = append(ips, addr.IP)
+		}
+	}
+	epItem.IPs = ips
+
+	kc.reqChannel <- &core.AsyncRequests{ Type: core.RequestTypeUpdateEndPoints, Data: &epItem}
+
 }
 
-func (kc *kubeClient) ListEPs() error {
+func (kc *kubeClient) NewEPWatcher() error {
+
+	logger := kc.logger.GetChild("epWatcher").(nuclio.Logger)
+	logger.Debug("Watching for Endpoint changes")
 
 	opts := meta_v1.ListOptions{
 		LabelSelector: NUCLIO_SELECTOR,
 	}
 
-	result, err := kc.kubeClient.CoreV1().Endpoints(kc.namespace).List(opts)
-	if err != nil {
-		return errors.Wrap(err, "Failed to list deployments")
+	listWatch := &cache.ListWatch{
+		ListFunc: func(options meta_v1.ListOptions) (runtime.Object, error) {
+			return kc.kubeClient.Endpoints(kc.namespace).List(opts)
+		},
+		WatchFunc: func(options meta_v1.ListOptions) (watch.Interface, error) {
+			return kc.kubeClient.Endpoints(kc.namespace).Watch(opts)
+		},
 	}
 
-	for _, ep := range result.Items {
-		epItem := core.FunctionEndPoints{Namespace:ep.Namespace, Name:ep.Name, Version:ep.Labels["version"]}
-		ips := []string{}
-		port := 8080
-		epItem.APIPort = port
-		for _, subset := range ep.Subsets {
-			for _, addr := range subset.Addresses {
-				ips = append(ips, addr.IP)
-			}
-		}
-		epItem.IPs = ips
-		kc.logger.InfoWith("got EPs", "ep", epItem)
+	_, controller := cache.NewInformer(
+		listWatch,
+		&v1.Endpoints{},
+		time.Minute*10,
+		cache.ResourceEventHandlerFuncs{
+			AddFunc: func(obj interface{}) {
+				kc.processEP(obj.(*v1.Endpoints))
+			},
+			UpdateFunc: func(oldObj, newObj interface{}) {
+				kc.processEP(newObj.(*v1.Endpoints))
+			},
+			DeleteFunc: func(obj interface{}) {
 
-		kc.reqChannel <- &core.AsyncRequests{ Type: core.RequestTypeUpdateEndPoints, Data: &epItem}
+			},
+		},
+	)
 
-	}
+	// run the watcher. TODO: pass a channel that can receive stop requests, when stop is supported
+	go controller.Run(make(chan struct{}))
 
 	return nil
 }

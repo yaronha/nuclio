@@ -29,22 +29,24 @@ func (fd *FuncDirectory) FunctionLookup(request *LookupRequest) error {
 	}
 
 	if fn.IsReady() {
-		request.ReturnChan <- &LookupResponse{DestURL: fn.getFunctionURL(), DestFunction: fn.Name + ":" + fn.Version}
+		request.ReturnChan <- &LookupResponse{DestURL: fn.getFunctionURL(), DestFunction: fn.Function + ":" + fn.Version}
 		return nil
 	}
 
-	fn.deferRequest(request)
+	fn.requests = append(fn.requests, request)
+	// TODO: re-enable the function if needed
+
 
 	return nil
 }
 
 func (fd *FuncDirectory) UpdateFunction(fn *FunctionBase) {
 	//TODO: detect state change
-	function, ok := fd.functions[getFuncKey(fn.Namespace, fn.Name, fn.Version)]
+	function, ok := fd.functions[getFuncKey(fn.Namespace, fn.Function, fn.Version)]
 
 	if !ok {
 		function = &FunctionRecord{FunctionBase: *fn}
-		fd.functions[getFuncKey(fn.Namespace, fn.Name, fn.Version)] = function
+		fd.functions[getFuncKey(fn.Namespace, fn.Function, fn.Version)] = function
 		fd.Radix.UpdatePaths(function)
 		return
 	}
@@ -55,7 +57,7 @@ func (fd *FuncDirectory) UpdateFunction(fn *FunctionBase) {
 		function.Ingresses = fn.Ingresses
 		function.CanScaledown = fn.CanScaledown
 		function.Gen = fn.Gen
-		fd.functions[getFuncKey(fn.Namespace, fn.Name, fn.Version)] = function
+		fd.functions[getFuncKey(fn.Namespace, fn.Function, fn.Version)] = function
 		fd.Radix.UpdatePaths(function)
 	}
 

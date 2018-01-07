@@ -6,6 +6,7 @@ import (
 	"github.com/nuclio/nuclio/pkg/starter/kube"
 	"github.com/pkg/errors"
 	"time"
+	"github.com/nuclio/nuclio/pkg/platform/kube/functioncr"
 )
 
 func NewStarter(logger nuclio.Logger, config StarterConfig) (*Starter, error) {
@@ -38,25 +39,65 @@ func (s *Starter) Start() error {
 	}
 
 	s.funcDB = core.NewFuncDirectory()
-	err = s.StartLoop()
-	if err != nil {
-		return errors.Wrap(err, "Failed to start event loop")
-	}
 
-	err = kc.Start()
+	functionChanges, err := kc.Function.Watch()
 	if err != nil {
-		return errors.Wrap(err, "Failed to start Kubernetes watchers")
-	}
-
-
-	err = kc.Function.LoadFunctions()
-	if err != nil {
-		return err
+		return errors.Wrap(err, "Failed to watch functions")
 	}
 
 	time.Sleep(time.Second)
 
-	kc.ListEPs()
+	err = kc.NewEPWatcher()
+	if err != nil {
+		return errors.Wrap(err, "Failed to watch endpoints")
+	}
+
+	go func() {
+		for {
+
+			select {
+
+			case change := <- functionChanges:
+
+				switch change.Kind {
+				case functioncr.ChangeKindAdded, functioncr.ChangeKindUpdated :
+
+					function := kc.Function.FuncCRtoFunction(change.Function)
+					s.logger.DebugWith("Update Function", "func", function)
+					s.funcDB.UpdateFunction(function)
+
+				case functioncr.ChangeKindDeleted:
+
+					s.logger.DebugWith("Function deleted", "function", change.Function.Name)
+
+
+				}
+
+
+			case req := <- s.RequestsChannel:
+
+				switch req.Type {
+
+				case core.RequestTypeLookup:
+
+					request := req.Data.(*core.LookupRequest)
+					s.logger.DebugWith("Function Lookup", "host", request.Host, "path", request.Path)
+					s.funcDB.FunctionLookup(request)
+
+				case core.RequestTypeUpdateEndPoints:
+
+					eps := req.Data.(*core.FunctionEndPoints)
+					s.logger.DebugWith("Update EndPoints", "eps", eps)
+					s.funcDB.UpdateEndPoints(eps)
+
+				}
+
+
+			}
+
+		}
+	}()
+
 
 	time.Sleep(time.Second)
 
@@ -71,35 +112,3 @@ func (s *Starter) Start() error {
 
 }
 
-func (s *Starter) StartLoop() error {
-
-	go func() {
-		for {
-			req := <- s.RequestsChannel
-			switch req.Type {
-
-			case core.RequestTypeLookup:
-
-				request := req.Data.(*core.LookupRequest)
-				s.logger.DebugWith("Function Lookup", "host", request.Host, "path", request.Path)
-				s.funcDB.FunctionLookup(request)
-
-			case core.RequestTypeUpdateFunction:
-
-				function := req.Data.(*core.FunctionBase)
-				s.logger.DebugWith("Update Function", "func", function)
-				s.funcDB.UpdateFunction(function)
-
-			case core.RequestTypeUpdateEndPoints:
-
-				eps := req.Data.(*core.FunctionEndPoints)
-				s.logger.DebugWith("Update EndPoints", "eps", eps)
-				s.funcDB.UpdateEndPoints(eps)
-
-			}
-
-		}
-	}()
-
-	return nil
-}

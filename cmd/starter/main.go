@@ -51,7 +51,7 @@ func createLogger(verbose bool) (nuclio.Logger, error) {
 		loggerLevel = nucliozap.InfoLevel
 	}
 
-	logger, err := nucliozap.NewNuclioZapCmd("dealer", loggerLevel)
+	logger, err := nucliozap.NewNuclioZapCmd("starter", loggerLevel)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to create logger")
 	}
