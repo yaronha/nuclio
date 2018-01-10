@@ -2,6 +2,8 @@ package core
 
 import (
 	"fmt"
+	"github.com/valyala/fasthttp"
+	"strings"
 )
 
 func NewFuncDirectory() *FuncDirectory {
@@ -29,7 +31,7 @@ func (fd *FuncDirectory) FunctionLookup(request *LookupRequest) error {
 	}
 
 	if fn.IsReady() {
-		request.ReturnChan <- &LookupResponse{DestURL: fn.getFunctionURL(), DestFunction: fn.Function + ":" + fn.Version}
+		request.ReturnChan <- &LookupResponse{HostClient: fn.hostClient,  DestURL: fn.getFunctionURL(), DestFunction: fn.Function + ":" + fn.Version}
 		return nil
 	}
 
@@ -75,6 +77,12 @@ func (fd *FuncDirectory) UpdateEndPoints(eps *FunctionEndPoints) error {
 	function.endPoints = eps.IPs
 	function.apiPort = eps.APIPort
 	function.controlPort = eps.ControlPort
+
+	addrList := []string{}
+	for _, ip := range eps.IPs {
+		addrList = append(addrList, fmt.Sprintf("%s:%d", ip, eps.APIPort))
+	}
+	function.hostClient = &fasthttp.HostClient{ Addr: strings.Join(addrList, ",")}
 
 	if restarted {
 		function.releaseRequests()

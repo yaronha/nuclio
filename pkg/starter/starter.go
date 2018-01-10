@@ -7,7 +7,12 @@ import (
 	"github.com/pkg/errors"
 	"time"
 	"github.com/nuclio/nuclio/pkg/platform/kube/functioncr"
+	"github.com/valyala/fasthttp"
+	"bytes"
+	"fmt"
 )
+
+const LISETEN_ON_PORT = "30088"
 
 func NewStarter(logger nuclio.Logger, config StarterConfig) (*Starter, error) {
 	newStarter := Starter{logger:logger}
@@ -25,10 +30,10 @@ type StarterConfig struct {
 }
 
 type Starter struct {
-	logger           nuclio.Logger
-	config           *StarterConfig
-	RequestsChannel  chan *core.AsyncRequests
-	funcDB           *core.FuncDirectory
+	logger              nuclio.Logger
+	config              *StarterConfig
+	funcDB              *core.FuncDirectory
+	RequestsChannel     chan *core.AsyncRequests
 }
 
 func (s *Starter) Start() error {
@@ -99,16 +104,55 @@ func (s *Starter) Start() error {
 	}()
 
 
-	time.Sleep(time.Second)
+	fmt.Printf("Listening on port : %s\n", LISETEN_ON_PORT)
+	if err := fasthttp.ListenAndServe(":" + LISETEN_ON_PORT, s.reverseProxyHandler); err != nil {
+		errors.Wrap(err,"error in fasthttp server: %s")
+	}
 
-	retChan := make(chan *core.LookupResponse)
-	req := &core.LookupRequest{ Host:"kuku", Path:"/encrypt/latest/xx", ReturnChan: retChan}
-	s.RequestsChannel <- &core.AsyncRequests{ Type: core.RequestTypeLookup, Data: req}
-
-	resp := <- retChan
-	s.logger.DebugWith("Lookup resp", "notfound", resp.NotFound, "url", resp.DestURL, "func", resp.DestFunction)
 
 	return nil
 
 }
 
+
+func (s *Starter) reverseProxyHandler(ctx *fasthttp.RequestCtx) {
+	req := &ctx.Request
+	resp := &ctx.Response
+	prepareRequest(req)
+
+	host := bytes.Split(req.Host(), []byte(":"))[0]
+
+	retChan := make(chan *core.LookupResponse)
+	lookupReq := &core.LookupRequest{ Host:string(host), Path:string(req.RequestURI()), ReturnChan: retChan}
+	s.RequestsChannel <- &core.AsyncRequests{ Type: core.RequestTypeLookup, Data: lookupReq}
+
+	ep := <- retChan
+	if ep.NotFound {
+		resp.SetStatusCode(503)
+		resp.SetBody([]byte("End point address was not found!"))
+		return
+	}
+	s.logger.DebugWith("Lookup resp", "notfound", ep.NotFound, "url", string(req.RequestURI()), "func", ep.DestFunction, "addr", ep.HostClient.Addr, "host", string(req.URI().Host()))
+
+	if err := ep.HostClient.Do(req, resp); err != nil {
+		ctx.Logger().Printf("error when proxying the request: %s", err)
+	}
+	postprocessResponse(resp)
+}
+
+func prepareRequest(req *fasthttp.Request) {
+	// do not proxy "Connection" header.
+	req.Header.Del("Connection")
+	// strip other unneeded headers.
+
+	// alter other request params before sending them to upstream host
+}
+
+func postprocessResponse(resp *fasthttp.Response) {
+	// do not proxy "Connection" header
+	resp.Header.Del("Connection")
+
+	// strip other unneeded headers
+
+	// alter other response data if needed
+}

@@ -5,6 +5,7 @@ import (
 	"time"
 	"fmt"
 	"math/rand"
+	"github.com/valyala/fasthttp"
 )
 
 
@@ -61,6 +62,7 @@ type FunctionRecord struct {
 	endPoints     []string
 	ready         bool
 	requests      []*LookupRequest
+	hostClient    *fasthttp.HostClient
 
 }
 
@@ -71,7 +73,7 @@ func (fn *FunctionRecord) IsReady() bool {
 func (fn *FunctionRecord) releaseRequests() {
 
 	for _, request := range fn.requests {
-		request.ReturnChan <- &LookupResponse{DestURL: fn.getFunctionURL(), DestFunction: fn.Function + ":" + fn.Version}
+		request.ReturnChan <- &LookupResponse{HostClient: fn.hostClient,  DestURL: fn.getFunctionURL(), DestFunction: fn.Function + ":" + fn.Version}
 	}
 
 	fn.requests = []*LookupRequest{}
@@ -94,5 +96,6 @@ type LookupResponse struct {
 	NotFound      bool
 	DestURL       string
 	DestFunction  string
+	HostClient    *fasthttp.HostClient
 }
 
