@@ -1,0 +1,91 @@
+
+daemon off;
+
+worker_processes 4;
+pid /run/nginx.pid;
+worker_shutdown_timeout 10s ;
+
+events {
+    multi_accept        on;
+    worker_connections  16384;
+    use                 epoll;
+}
+
+http {
+    sendfile            on;
+
+    aio                 threads;
+    aio_write           on;
+
+    tcp_nopush          on;
+    tcp_nodelay         on;
+
+    log_subrequest      on;
+
+    reset_timedout_connection on;
+
+    keepalive_timeout  75s;
+    keepalive_requests 100;
+
+    include /etc/nginx/mime.types;
+    default_type text/html;
+
+    server_tokens on;
+
+    # disable warnings
+    uninitialized_variable_warn off;
+    access_log /var/log/nginx/access.log upstreaminfo if=$loggable;
+    error_log  /var/log/nginx/error.log info;
+
+    upstream {{ $upstream.Name }} {
+        least_conn;
+        keepalive 32;
+
+        {{ range $server := $upstream.Endpoints }}server {{ $server.Address | formatIP }}:{{ $server.Port }} max_fails=0 fail_timeout=0;
+        {{ end }}
+    }
+
+    {{ end }}
+
+
+    {{ range $index, $server := $servers }}
+
+    ## start server {{ $server.Hostname }}
+    server {
+        # server_name {{ $server.Hostname }};
+        listen {{ $server.Port }};
+
+        {{ range $location := $server.Locations }}
+        {{ $ing := (getIngressInformation $location.Ingress) }}
+        {{/* $ing.Metadata contains the Ingress metadata */}}
+
+         location {{ $ing.Path }} {
+            set $namespace      "{{ $ing.Namespace }}";
+            set $ingress_name   "{{ $ing.Rule }}";
+            set $service_name   "{{ $ing.Service }}";
+
+            proxy_set_header X-Forwarded-Host       $best_http_host;
+            proxy_set_header X-Forwarded-Port       $pass_port;
+            proxy_set_header X-Forwarded-Proto      $pass_access_scheme;
+            proxy_set_header X-Original-URI         $request_uri;
+            proxy_set_header X-Scheme               $pass_access_scheme;
+            proxy_set_header Proxy                  "";
+
+            proxy_connect_timeout                   5s;
+            proxy_send_timeout                      60s;
+            proxy_read_timeout                      60s;
+            proxy_http_version                      1.1;
+
+            proxy_pass {{ $ing.Upstream }}
+        }
+
+        {{ end }}
+
+    }
+    ## end server {{ $server.Hostname }}
+
+    {{ end }}
+
+}
+
+{{ end }}
