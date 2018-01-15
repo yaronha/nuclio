@@ -8,6 +8,9 @@ import (
 	"github.com/dgrijalva/jwt-go"
 	"time"
 	"strings"
+	"html/template"
+	"fmt"
+	"bytes"
 )
 
 var (
@@ -75,11 +78,11 @@ func Handler(context *nuclio.Context, event nuclio.Event) (interface{}, error) {
 		user := values.Get("user")
 		passwd := values.Get("passwd")
 
-		if user[0:1] != "q" || passwd != "a" {
+		if user != "q" || passwd != "a" {
 			// TODO: try login again
 			context.Logger.ErrorWith("Unauthorized", "user", user, "passwd", passwd)
 			return nuclio.Response{	StatusCode:  http.StatusUnauthorized,
-				Body: []byte("failed to login") }, nil
+				Body: getTemplate("Login failed! Try Again"), ContentType: "text/html" }, nil
 		}
 
 		if signKey == nil {
@@ -107,7 +110,7 @@ func Handler(context *nuclio.Context, event nuclio.Event) (interface{}, error) {
 
 	// return Login Form
 	return nuclio.Response{	StatusCode:  200,
-		Body: []byte(loginForm),
+		Body: getTemplate(""),
 		//Headers: hdr,
 		ContentType: "text/html"}, nil
 }
@@ -140,6 +143,16 @@ func verifyToken(tokenString string) (*jwt.Token, error) {
 
 }
 
+func getTemplate(text string) []byte {
+	t := template.New("login")
+	t, _ = t.Parse(loginForm)
+	if text != "" {
+		text = fmt.Sprintf(`<font color="red">%s</font><br><br>`, text)
+	}
+	var buf bytes.Buffer
+	t.Execute(&buf, text)
+	return buf.Bytes()
+}
 
 const PublicKey = `
 -----BEGIN PUBLIC KEY-----
@@ -212,15 +225,15 @@ button:hover {
 <body>
 
 
-<form action="/login">
+<form method="post" action="/login">
 
   <div class="container">
-    <h1>Login Form</h1>
+    <h1>Login Form</h1>{{.}}
     <label><b>Username</b></label>
-    <input type="text" placeholder="Enter Username" name="uname" required>
+    <input type="text" placeholder="Enter Username" name="user" required>
 
     <label><b>Password</b></label>
-    <input type="password" placeholder="Enter Password" name="psw" required>
+    <input type="password" placeholder="Enter Password" name="passwd" required>
 
     <button type="submit">Login</button>
     <label>
