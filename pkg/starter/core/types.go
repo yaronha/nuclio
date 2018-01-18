@@ -57,9 +57,9 @@ type FunctionRecord struct {
 
 	lastEventCnt  int
 	lastStats     time.Time
-	apiPort       int
+	ApiPort       int
 	controlPort   int
-	endPoints     []string
+	EndPoints     []string
 	ready         bool
 	requests      []*LookupRequest
 	hostClient    *fasthttp.HostClient
@@ -67,7 +67,7 @@ type FunctionRecord struct {
 }
 
 func (fn *FunctionRecord) IsReady() bool {
-	return !fn.Disabled && (len(fn.endPoints) > 0)
+	return !fn.Disabled && (len(fn.EndPoints) > 0)
 }
 
 func (fn *FunctionRecord) releaseRequests() {
@@ -80,8 +80,8 @@ func (fn *FunctionRecord) releaseRequests() {
 }
 
 func (fn *FunctionRecord) getFunctionURL() string {
-	idx := rand.Intn(len(fn.endPoints))
-	return fmt.Sprintf("%s:%d", fn.endPoints[idx], fn.apiPort)
+	idx := rand.Intn(len(fn.EndPoints))
+	return fmt.Sprintf("%s:%d", fn.EndPoints[idx], fn.ApiPort)
 }
 
 type LookupRequest struct {

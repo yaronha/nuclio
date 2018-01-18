@@ -4,18 +4,20 @@ import (
 	"fmt"
 	"github.com/valyala/fasthttp"
 	"strings"
+	"github.com/nuclio/nuclio-sdk"
 )
 
-func NewFuncDirectory() *FuncDirectory {
-	newDir := FuncDirectory{}
+func NewFuncDirectory(logger nuclio.Logger) *FuncDirectory {
+	newDir := FuncDirectory{logger: logger.GetChild("funcdict")}
 	newDir.functions = map[string]*FunctionRecord{}
-	newDir.Radix = NewPathRadix()
+	newDir.Radix = NewPathRadix(logger)
 	return &newDir
 }
 
 type FuncDirectory struct {
 	functions  map[string]*FunctionRecord
 	Radix      *PathRadix
+	logger     nuclio.Logger
 }
 
 func (fd *FuncDirectory) GetFunctions() map[string]*FunctionRecord {
@@ -65,6 +67,25 @@ func (fd *FuncDirectory) UpdateFunction(fn *FunctionBase) {
 
 }
 
+func (fd *FuncDirectory) DeleteFunction(fn *FunctionBase) error {
+	//TODO: detect state change
+	function, ok := fd.functions[getFuncKey(fn.Namespace, fn.Function, fn.Version)]
+
+	if !ok {
+		fd.logger.ErrorWith("function not found in DeleteFunction", "func", fn.Function, "ver", fn.Version)
+		return fmt.Errorf("function not found in DeleteFunction")
+	}
+
+	err := fd.Radix.DeletePaths(function)
+	if err != nil {
+		return err
+	}
+
+	delete(fd.functions, getFuncKey(fn.Namespace, fn.Function, fn.Version))
+
+	return nil
+}
+
 func (fd *FuncDirectory) UpdateEndPoints(eps *FunctionEndPoints) error {
 
 	function, ok := fd.functions[getFuncKey(eps.Namespace, eps.Name, eps.Version)]
@@ -72,10 +93,10 @@ func (fd *FuncDirectory) UpdateEndPoints(eps *FunctionEndPoints) error {
 		return fmt.Errorf("Function %s/%s:%s not found", eps.Namespace, eps.Name, eps.Version)
 	}
 
-	restarted := (len(function.endPoints) == 0) && (len(eps.IPs) > 0)
+	restarted := (len(function.EndPoints) == 0) && (len(eps.IPs) > 0)
 
-	function.endPoints = eps.IPs
-	function.apiPort = eps.APIPort
+	function.EndPoints = eps.IPs
+	function.ApiPort = eps.APIPort
 	function.controlPort = eps.ControlPort
 
 	addrList := []string{}

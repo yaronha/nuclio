@@ -37,6 +37,8 @@ http {
     access_log /var/log/nginx/access.log upstreaminfo if=$loggable;
     error_log  /var/log/nginx/error.log info;
 
+    {{ range $name, $upstream := $backends }}
+
     upstream {{ $upstream.Name }} {
         least_conn;
         keepalive 32;

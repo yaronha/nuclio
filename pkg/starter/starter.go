@@ -43,7 +43,7 @@ func (s *Starter) Start() error {
 		return errors.Wrap(err, "Failed to init Kubernetes client")
 	}
 
-	s.funcDB = core.NewFuncDirectory()
+	s.funcDB = core.NewFuncDirectory(s.logger)
 
 	functionChanges, err := kc.Function.Watch()
 	if err != nil {
@@ -73,8 +73,9 @@ func (s *Starter) Start() error {
 
 				case functioncr.ChangeKindDeleted:
 
-					s.logger.DebugWith("Function deleted", "function", change.Function.Name)
-
+					function := kc.Function.FuncCRtoFunction(change.Function)
+					s.logger.DebugWith("Function deleted", "function", function.Function)
+					s.funcDB.DeleteFunction(function)
 
 				}
 
@@ -103,12 +104,19 @@ func (s *Starter) Start() error {
 		}
 	}()
 
+	time.Sleep(2 * time.Second)
+	err = core.CreateTemplate(s.funcDB)
+	if err !=nil {
+		fmt.Println(err)
+	}
+	//fmt.Println("XXX", s.funcDB.Radix.WalkTree(""))
 
+	/*
 	fmt.Printf("Listening on port : %s\n", LISETEN_ON_PORT)
 	if err := fasthttp.ListenAndServe(":" + LISETEN_ON_PORT, s.reverseProxyHandler); err != nil {
 		errors.Wrap(err,"error in fasthttp server: %s")
 	}
-
+	*/
 
 	return nil
 
