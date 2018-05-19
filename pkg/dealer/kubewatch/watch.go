@@ -60,10 +60,10 @@ func NewPodWatcher(client *kubernetes.Clientset, managerContext *jobs.ManagerCon
 
 	listWatch := &cache.ListWatch{
 		ListFunc: func(options meta_v1.ListOptions) (runtime.Object, error) {
-			return client.Pods(namespace).List(opts)
+			return client.CoreV1().Pods(namespace).List(opts)
 		},
 		WatchFunc: func(options meta_v1.ListOptions) (watch.Interface, error) {
-			return client.Pods(namespace).Watch(opts)
+			return client.CoreV1().Pods(namespace).Watch(opts)
 		},
 	}
 
@@ -144,7 +144,7 @@ func getPodState(pod *v1.Pod) jobs.ProcessState {
 func isPodNewer(a *v1.Pod, b *v1.Pod) bool {
 	t1 := a.ObjectMeta.CreationTimestamp
 	t2 := b.ObjectMeta.CreationTimestamp
-	return t2.Before(t1)
+	return t2.Before(&t1)
 }
 
 func NewDeployWatcher(client *kubernetes.Clientset, managerContext *jobs.ManagerContext, log logger.Logger, namespace string) error {
@@ -162,10 +162,10 @@ func NewDeployWatcher(client *kubernetes.Clientset, managerContext *jobs.Manager
 
 	listWatch := &cache.ListWatch{
 		ListFunc: func(options meta_v1.ListOptions) (runtime.Object, error) {
-			return client.AppsV1beta1Client.Deployments(namespace).List(opts)
+			return client.AppsV1().Deployments(namespace).List(opts)
 		},
 		WatchFunc: func(options meta_v1.ListOptions) (watch.Interface, error) {
-			return client.AppsV1beta1Client.Deployments(namespace).Watch(opts)
+			return client.AppsV1().Deployments(namespace).Watch(opts)
 		},
 	}
 

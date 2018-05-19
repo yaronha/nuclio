@@ -24,11 +24,11 @@ import (
 	"github.com/nuclio/nuclio/pkg/dealer/jobs"
 	"github.com/nuclio/nuclio/pkg/dealer/kubewatch"
 	"github.com/nuclio/nuclio/pkg/dealer/portal"
-	"github.com/nuclio/nuclio/pkg/zap"
 	"github.com/pkg/errors"
 	"k8s.io/client-go/kubernetes"
 	"os"
 	"time"
+	"github.com/nuclio/zap"
 )
 
 func run() error {
@@ -112,7 +112,7 @@ func run() error {
 
 	}
 
-	listenPort := 30000
+	listenPort := 3000
 	portal, err := portal.NewPortal(logger, dealer.Ctx, listenPort)
 	if err != nil {
 		return err

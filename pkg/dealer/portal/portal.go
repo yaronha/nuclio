@@ -112,7 +112,7 @@ func (d *DealerPortal) updateDeployment(w http.ResponseWriter, r *http.Request) 
 	}
 
 	dep, err := d.managerContext.SubmitReq(&jobs.RequestMessage{
-		Object: data.Deployment, Type: jobs.RequestTypeDeployUpdate})
+		Object: data.DeploymentSpec, Type: jobs.RequestTypeDeployUpdate})
 
 	if err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
@@ -133,14 +133,14 @@ func (d *DealerPortal) removeDeployment(w http.ResponseWriter, r *http.Request) 
 	}
 
 	_, err := d.managerContext.SubmitReq(&jobs.RequestMessage{
-		Object: data.Deployment, Type: jobs.RequestTypeDeployRemove})
+		Object: data.DeploymentSpec, Type: jobs.RequestTypeDeployRemove})
 
 	if err != nil {
 		render.Render(w, r, ErrInvalidRequest(err))
 		return
 	}
 
-	w.Write([]byte(fmt.Sprintf("Deleted deployment: %s", data.Deployment.Name)))
+	w.Write([]byte(fmt.Sprintf("Deleted deployment: %s", data.DeploymentSpec.Name)))
 }
 
 func (jp *DealerPortal) listDeployments(w http.ResponseWriter, r *http.Request) {
@@ -167,7 +167,7 @@ func (jp *DealerPortal) listDeployments(w http.ResponseWriter, r *http.Request) 
 }
 
 type DeployRequest struct {
-	*jobs.Deployment
+	*jobs.DeploymentSpec
 }
 
 func (d *DeployRequest) Bind(r *http.Request) error {
