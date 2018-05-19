@@ -17,13 +17,13 @@ limitations under the License.
 package jobs
 
 import (
-	"github.com/nuclio/nuclio-sdk"
 	"github.com/nuclio/nuclio/pkg/dealer/asyncflow"
 	"github.com/nuclio/nuclio/pkg/dealer/client"
+	"github.com/nuclio/logger"
 )
 
 type ManagerContext struct {
-	Logger            nuclio.Logger
+	Logger            logger.Logger
 	RequestsChannel   chan *RequestMessage
 	ProcRespChannel   chan *client.Response
 	AsyncTasksChannel chan *asyncflow.AsyncWorkflowTask
@@ -37,9 +37,9 @@ type ManagerContextConfig struct {
 	StorePath   string
 }
 
-func NewManagerContext(logger nuclio.Logger, asyncClient *client.AsyncClient, config *ManagerContextConfig) *ManagerContext {
+func NewManagerContext(log logger.Logger, asyncClient *client.AsyncClient, config *ManagerContextConfig) *ManagerContext {
 	newContext := ManagerContext{
-		Logger:            logger.GetChild("jobMng").(nuclio.Logger),
+		Logger:            log.GetChild("jobMng").(logger.Logger),
 		RequestsChannel:   make(chan *RequestMessage, 100),
 		ProcRespChannel:   make(chan *client.Response, 100),
 		AsyncTasksChannel: make(chan *asyncflow.AsyncWorkflowTask, 100),
@@ -47,7 +47,7 @@ func NewManagerContext(logger nuclio.Logger, asyncClient *client.AsyncClient, co
 		DisablePush:       config.DisablePush,
 	}
 
-	newContext.JobStore = NewJobFileStore(config.StorePath, logger)
+	newContext.JobStore = NewJobFileStore(config.StorePath, log)
 	return &newContext
 }
 

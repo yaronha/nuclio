@@ -20,22 +20,22 @@ import (
 	"fmt"
 	"github.com/go-chi/chi"
 	"github.com/go-chi/render"
-	"github.com/nuclio/nuclio-sdk"
 	"github.com/nuclio/nuclio/pkg/dealer/jobs"
 	"net/http"
+	"github.com/nuclio/logger"
 )
 
-func NewPortal(logger nuclio.Logger, managerCtx *jobs.ManagerContext, port int) (DealerPortal, error) {
+func NewPortal(log logger.Logger, managerCtx *jobs.ManagerContext, port int) (DealerPortal, error) {
 	newPortal := DealerPortal{
 		managerContext: managerCtx,
 		port:           port,
-		logger:         logger.GetChild("portal").(nuclio.Logger)}
+		logger:         log.GetChild("portal").(logger.Logger)}
 	return newPortal, nil
 }
 
 type DealerPortal struct {
 	managerContext *jobs.ManagerContext
-	logger         nuclio.Logger
+	logger         logger.Logger
 	port           int
 }
 

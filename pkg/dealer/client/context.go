@@ -19,20 +19,20 @@ package client
 
 import (
 	"github.com/valyala/fasthttp"
-	"github.com/nuclio/nuclio-sdk"
 	"fmt"
 	"github.com/pkg/errors"
+	"github.com/nuclio/logger"
 )
 
 type Context struct {
-	logger     nuclio.Logger
+	logger     logger.Logger
 	httpClient *fasthttp.HostClient
 	Url string
 }
 
-func NewContext(parentLogger nuclio.Logger, url string) (*Context, error) {
+func NewContext(parentLogger logger.Logger, url string) (*Context, error) {
 	newClient := &Context{
-		logger: parentLogger.GetChild("client").(nuclio.Logger),
+		logger: parentLogger.GetChild("client").(logger.Logger),
 		httpClient: &fasthttp.HostClient{
 			Addr: url,
 		},

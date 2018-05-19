@@ -20,18 +20,18 @@ import (
 	"fmt"
 	"github.com/go-chi/chi"
 	"github.com/go-chi/render"
-	"github.com/nuclio/nuclio-sdk"
 	"github.com/nuclio/nuclio/pkg/dealer/jobs"
 	"net/http"
+	"github.com/nuclio/logger"
 )
 
-func NewJobsPortal(logger nuclio.Logger, managerCtx *jobs.ManagerContext) (*JobsPortal, error) {
+func NewJobsPortal(logger logger.Logger, managerCtx *jobs.ManagerContext) (*JobsPortal, error) {
 	newJobsPortal := JobsPortal{logger: logger, managerContext: managerCtx}
 	return &newJobsPortal, nil
 }
 
 type JobsPortal struct {
-	logger         nuclio.Logger
+	logger         logger.Logger
 	managerContext *jobs.ManagerContext
 }
 

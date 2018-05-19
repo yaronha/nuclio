@@ -19,11 +19,11 @@ package jobs
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/nuclio/nuclio-sdk"
 	"github.com/nuclio/nuclio/pkg/dealer/client"
 	"github.com/pkg/errors"
 	"net/http"
 	"time"
+	"github.com/nuclio/logger"
 )
 
 type ProcessState int8
@@ -57,7 +57,7 @@ type Process struct {
 	LastUpdate time.Time `json:"lastUpdate,omitempty"`
 
 	//BaseProcess
-	logger        nuclio.Logger
+	logger        logger.Logger
 	ctx           *ManagerContext
 	removingTasks bool
 	//tasks         []*Task
@@ -93,7 +93,7 @@ func (p *ProcessMessage) Render(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-func NewProcess(logger nuclio.Logger, context *ManagerContext, newProc *ProcessMessage) (*Process, error) {
+func NewProcess(logger logger.Logger, context *ManagerContext, newProc *ProcessMessage) (*Process, error) {
 	proc := &Process{BaseProcess: newProc.BaseProcess}
 	if proc.Namespace == "" {
 		proc.Namespace = "default"

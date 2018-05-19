@@ -2,10 +2,10 @@ package jobs
 
 import (
 	"encoding/json"
-	"github.com/nuclio/nuclio-sdk"
 	"io/ioutil"
 	"os"
 	"path"
+	"github.com/nuclio/logger"
 )
 
 type JobStore interface {
@@ -15,13 +15,13 @@ type JobStore interface {
 	ListJobs(namespace string) ([]*JobMessage, error)
 }
 
-func NewJobFileStore(path string, logger nuclio.Logger) *JobFileStore {
+func NewJobFileStore(path string, logger logger.Logger) *JobFileStore {
 	return &JobFileStore{Path: path, logger: logger}
 }
 
 type JobFileStore struct {
 	Path   string
-	logger nuclio.Logger
+	logger logger.Logger
 }
 
 func (fs *JobFileStore) ListJobs(namespace string) ([]*JobMessage, error) {

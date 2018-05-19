@@ -1,19 +1,19 @@
 package jobs
 
 import (
-	"github.com/nuclio/nuclio-sdk"
 	"strings"
+	"github.com/nuclio/logger"
 )
 
 type DeploymentMap struct {
 	deployments map[string][]*Deployment
-	logger      nuclio.Logger
+	logger      logger.Logger
 	ctx         *ManagerContext
 }
 
-func NewDeploymentMap(logger nuclio.Logger, context *ManagerContext) (*DeploymentMap, error) {
+func NewDeploymentMap(log logger.Logger, context *ManagerContext) (*DeploymentMap, error) {
 	newDeploymentMap := DeploymentMap{
-		logger: logger.GetChild("depMap").(nuclio.Logger),
+		logger: log.GetChild("depMap").(logger.Logger),
 		ctx:    context}
 	newDeploymentMap.deployments = map[string][]*Deployment{}
 	return &newDeploymentMap, nil

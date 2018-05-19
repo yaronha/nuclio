@@ -3,7 +3,6 @@ package kubewatch
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/nuclio/nuclio-sdk"
 	"github.com/nuclio/nuclio/pkg/dealer/jobs"
 	"github.com/pkg/errors"
 	"k8s.io/api/apps/v1beta1"
@@ -16,6 +15,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
 	"time"
+	"github.com/nuclio/logger"
 )
 
 const NUCLIO_SELECTOR = "serverless=test"
@@ -29,7 +29,7 @@ func GetClientConfig(kubeconfig string) (*rest.Config, error) {
 
 type Watcher struct {
 	managerContext *jobs.ManagerContext
-	logger         nuclio.Logger
+	logger         logger.Logger
 	namespace      string
 }
 
@@ -45,9 +45,9 @@ func (w *Watcher) dispatchChange(message *jobs.RequestMessage) {
 	w.managerContext.RequestsChannel <- message
 }
 
-func NewPodWatcher(client *kubernetes.Clientset, managerContext *jobs.ManagerContext, logger nuclio.Logger, namespace string) error {
+func NewPodWatcher(client *kubernetes.Clientset, managerContext *jobs.ManagerContext, log logger.Logger, namespace string) error {
 	newWatcher := &Watcher{
-		logger:         logger.GetChild("podWatcher").(nuclio.Logger),
+		logger:         log.GetChild("podWatcher").(logger.Logger),
 		namespace:      namespace,
 		managerContext: managerContext,
 	}
@@ -147,9 +147,9 @@ func isPodNewer(a *v1.Pod, b *v1.Pod) bool {
 	return t2.Before(t1)
 }
 
-func NewDeployWatcher(client *kubernetes.Clientset, managerContext *jobs.ManagerContext, logger nuclio.Logger, namespace string) error {
+func NewDeployWatcher(client *kubernetes.Clientset, managerContext *jobs.ManagerContext, log logger.Logger, namespace string) error {
 	newWatcher := &Watcher{
-		logger:         logger.GetChild("deployWatcher").(nuclio.Logger),
+		logger:         log.GetChild("deployWatcher").(logger.Logger),
 		namespace:      namespace,
 		managerContext: managerContext,
 	}
@@ -244,7 +244,7 @@ type trigStruct struct {
 	Disable    bool   `json:"disable"`
 }
 
-func ListDeployments(client *kubernetes.Clientset, logger nuclio.Logger, namespace string) ([]*jobs.DeploymentSpec, error) {
+func ListDeployments(client *kubernetes.Clientset, logger logger.Logger, namespace string) ([]*jobs.DeploymentSpec, error) {
 
 	listOptions := meta_v1.ListOptions{
 		LabelSelector: NUCLIO_SELECTOR,
@@ -265,7 +265,7 @@ func ListDeployments(client *kubernetes.Clientset, logger nuclio.Logger, namespa
 	return depList, nil
 }
 
-func ListPods(client *kubernetes.Clientset, logger nuclio.Logger, namespace string) ([]*jobs.BaseProcess, error) {
+func ListPods(client *kubernetes.Clientset, logger logger.Logger, namespace string) ([]*jobs.BaseProcess, error) {
 
 	listOptions := meta_v1.ListOptions{
 		LabelSelector: NUCLIO_SELECTOR,

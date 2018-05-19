@@ -18,7 +18,6 @@ package app
 
 import (
 	"fmt"
-	"github.com/nuclio/nuclio-sdk"
 	"github.com/pkg/errors"
 
 	"encoding/json"
@@ -27,11 +26,12 @@ import (
 	"io/ioutil"
 	"net/http"
 	"time"
+	"github.com/nuclio/logger"
 )
 
 const NUM_WEB_CLIENTS = 4
 
-func NewDealer(logger nuclio.Logger, config *jobs.ManagerContextConfig) (*Dealer, error) {
+func NewDealer(logger logger.Logger, config *jobs.ManagerContextConfig) (*Dealer, error) {
 	newDealer := Dealer{}
 	newDealer.Processes = make(map[string]*jobs.Process)
 	newDealer.verbose = true // TODO: from config

@@ -1,11 +1,11 @@
 package asyncflow
 
 import (
-	"github.com/nuclio/nuclio-sdk"
 	"time"
+	"github.com/nuclio/logger"
 )
 
-func NewWorkflowTask(logger nuclio.Logger, tasksChannel *chan *AsyncWorkflowTask, task AsyncWorkflowTask) *AsyncWorkflowTask {
+func NewWorkflowTask(logger logger.Logger, tasksChannel *chan *AsyncWorkflowTask, task AsyncWorkflowTask) *AsyncWorkflowTask {
 	task.logger = logger
 	task.asyncTasksChannel = tasksChannel
 	task.quit = make(chan bool)
@@ -16,7 +16,7 @@ func NewWorkflowTask(logger nuclio.Logger, tasksChannel *chan *AsyncWorkflowTask
 }
 
 type AsyncWorkflowTask struct {
-	logger            nuclio.Logger
+	logger            logger.Logger
 	asyncTasksChannel *chan *AsyncWorkflowTask
 	Name              string
 	startedOn         time.Time

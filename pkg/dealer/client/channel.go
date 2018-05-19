@@ -17,10 +17,10 @@ limitations under the License.
 package client
 
 import (
-	"github.com/nuclio/nuclio-sdk"
+	"github.com/nuclio/logger"
 )
 
-func NewAsyncClient(logger nuclio.Logger) (*AsyncClient, error) {
+func NewAsyncClient(logger logger.Logger) (*AsyncClient, error) {
 
 	newAsyncClient := AsyncClient{logger: logger}
 	inChan := make(chan *ChanRequest, 100)
@@ -39,7 +39,7 @@ type ChanRequest struct {
 }
 
 type AsyncClient struct {
-	logger    nuclio.Logger
+	logger    logger.Logger
 	InChannel chan *ChanRequest
 }
 

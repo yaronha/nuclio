@@ -19,7 +19,7 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/nuclio/nuclio-sdk"
+	"github.com/nuclio/logger"
 	"github.com/nuclio/nuclio/cmd/dealer/app"
 	"github.com/nuclio/nuclio/pkg/dealer/jobs"
 	"github.com/nuclio/nuclio/pkg/dealer/kubewatch"
@@ -130,7 +130,7 @@ func main() {
 	}
 }
 
-func createLogger(verbose bool) (nuclio.Logger, error) {
+func createLogger(verbose bool) (logger.Logger, error) {
 	var loggerLevel nucliozap.Level
 
 	if verbose {
