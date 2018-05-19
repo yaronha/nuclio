@@ -17,29 +17,74 @@ limitations under the License.
 package test
 
 import (
+	"encoding/json"
 	"net/http"
 	"path"
 	"regexp"
 	"testing"
+	"time"
 
 	"github.com/nuclio/nuclio/pkg/platform"
+	"github.com/nuclio/nuclio/pkg/processor/test/callfunction"
+	"github.com/nuclio/nuclio/pkg/processor/test/cloudevents"
 	"github.com/nuclio/nuclio/pkg/processor/trigger/http/test/suite"
 
+	"github.com/nuclio/nuclio-sdk-go"
+	"github.com/satori/go.uuid"
 	"github.com/stretchr/testify/suite"
 )
 
-type TestSuite struct {
-	httpsuite.TestSuite
+// shared with EventReturner
+type eventFields struct {
+	ID             nuclio.ID              `json:"id,omitempty"`
+	TriggerClass   string                 `json:"triggerClass,omitempty"`
+	TriggerKind    string                 `json:"eventType,omitempty"`
+	ContentType    string                 `json:"contentType,omitempty"`
+	Headers        map[string]interface{} `json:"headers,omitempty"`
+	Timestamp      time.Time              `json:"timestamp,omitempty"`
+	Path           string                 `json:"path,omitempty"`
+	URL            string                 `json:"url,omitempty"`
+	Method         string                 `json:"method,omitempty"`
+	ShardID        int                    `json:"shardID,omitempty"`
+	TotalNumShards int                    `json:"totalNumShards,omitempty"`
+	Type           string                 `json:"type,omitempty"`
+	TypeVersion    string                 `json:"typeVersion,omitempty"`
+	Version        string                 `json:"version,omitempty"`
+	Body           string                 `json:"body,omitempty"`
 }
 
-func (suite *TestSuite) SetupTest() {
+type testSuite struct {
+	httpsuite.TestSuite
+	cloudevents.CloudEventsTestSuite
+	callfunction.CallFunctionTestSuite
+	runtime string
+}
+
+func newTestSuite(runtime string) *testSuite {
+	return &testSuite{runtime: runtime}
+}
+
+func (suite *testSuite) SetupTest() {
 	suite.TestSuite.SetupTest()
 
-	suite.Runtime = "python"
+	suite.Runtime = suite.runtime
+	suite.RuntimeDir = "python"
 	suite.FunctionDir = path.Join(suite.GetNuclioSourceDir(), "pkg", "processor", "runtime", "python", "test")
+	suite.CloudEventsTestSuite.HTTPSuite = &suite.TestSuite
+	suite.CloudEventsTestSuite.CloudEventsHandler = "eventreturner:handler"
+	suite.CallFunctionTestSuite.HTTPSuite = &suite.TestSuite
 }
 
-func (suite *TestSuite) TestOutputs() {
+func (suite *testSuite) TestStress() {
+
+	// Create blastConfiguration using default configurations + changes for python specification
+	blastConfiguration := suite.NewBlastConfiguration()
+
+	// Create stress test using suite.BlastHTTP
+	suite.BlastHTTP(blastConfiguration)
+}
+
+func (suite *testSuite) TestOutputs() {
 	statusOK := http.StatusOK
 	statusCreated := http.StatusCreated
 	statusInternalError := http.StatusInternalServerError
@@ -55,15 +100,12 @@ func (suite *TestSuite) TestOutputs() {
 	}
 	testPath := "/path/to/nowhere"
 
-	deployOptions := suite.GetDeployOptions("outputter",
+	createFunctionOptions := suite.GetDeployOptions("outputter",
 		suite.GetFunctionPath("outputter"))
 
-	deployOptions.FunctionConfig.Spec.Handler = "outputter:handler"
+	createFunctionOptions.FunctionConfig.Spec.Handler = "outputter:handler"
 
-	suite.DeployFunction(deployOptions, func(deployResult *platform.DeployResult) bool {
-		err := suite.WaitForContainer(deployResult.Port)
-		suite.Require().NoError(err, "Can't reach container on port %d", deployResult.Port)
-
+	suite.DeployFunction(createFunctionOptions, func(deployResult *platform.CreateFunctionResult) bool {
 		testRequests := []httpsuite.Request{
 			{
 				Name:                       "return string",
@@ -95,7 +137,7 @@ func (suite *TestSuite) TestOutputs() {
 			},
 			{
 				Name:                       "return response",
-				RequestHeaders:             map[string]string{"a": "1", "b": "2"},
+				RequestHeaders:             map[string]interface{}{"a": "1", "b": "2"},
 				RequestBody:                "return_response",
 				ExpectedResponseHeaders:    headersFromResponse,
 				ExpectedResponseBody:       "response body",
@@ -224,10 +266,65 @@ func (suite *TestSuite) TestOutputs() {
 	})
 }
 
+func (suite *testSuite) TestCustomEvent() {
+	createFunctionOptions := suite.GetDeployOptions("event-returner",
+		path.Join(suite.GetTestFunctionsDir(), "common", "event-returner", "python"))
+
+	createFunctionOptions.FunctionConfig.Spec.Handler = "eventreturner:handler"
+
+	requestMethod := "POST"
+	requestPath := "/testPath"
+	requestHeaders := map[string]interface{}{
+		"Testheaderkey1": "testHeaderValue1",
+		"Testheaderkey2": "testHeaderValue2",
+	}
+
+	suite.DeployFunction(createFunctionOptions, func(deployResult *platform.CreateFunctionResult) bool {
+		bodyVerifier := func(body []byte) {
+			unmarshalledBody := eventFields{}
+
+			// read the body JSON
+			err := json.Unmarshal(body, &unmarshalledBody)
+			suite.Require().NoError(err)
+
+			suite.Require().Equal("testBody", string(unmarshalledBody.Body))
+			suite.Require().Equal(requestPath, unmarshalledBody.Path)
+			suite.Require().Equal(requestMethod, unmarshalledBody.Method)
+			suite.Require().Equal("http", unmarshalledBody.TriggerKind)
+
+			// compare known headers
+			for requestHeaderKey, requestHeaderValue := range requestHeaders {
+				suite.Require().Equal(requestHeaderValue, unmarshalledBody.Headers[requestHeaderKey])
+			}
+
+			// ID must be a UUID
+			_, err = uuid.FromString(string(unmarshalledBody.ID))
+			suite.Require().NoError(err)
+		}
+
+		testRequest := httpsuite.Request{
+			RequestBody:          "testBody",
+			RequestHeaders:       requestHeaders,
+			RequestPort:          deployResult.Port,
+			RequestMethod:        requestMethod,
+			RequestPath:          requestPath,
+			ExpectedResponseBody: bodyVerifier,
+		}
+
+		if !suite.SendRequestVerifyResponse(&testRequest) {
+			return false
+		}
+
+		return true
+	})
+}
+
 func TestIntegrationSuite(t *testing.T) {
 	if testing.Short() {
 		return
 	}
 
-	suite.Run(t, new(TestSuite))
+	suite.Run(t, newTestSuite("python"))
+	suite.Run(t, newTestSuite("python:2.7"))
+	suite.Run(t, newTestSuite("python:3.6"))
 }

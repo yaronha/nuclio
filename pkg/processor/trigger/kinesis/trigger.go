@@ -19,10 +19,11 @@ package kinesis
 import (
 	"github.com/nuclio/nuclio/pkg/common"
 	"github.com/nuclio/nuclio/pkg/errors"
+	"github.com/nuclio/nuclio/pkg/functionconfig"
 	"github.com/nuclio/nuclio/pkg/processor/trigger"
 	"github.com/nuclio/nuclio/pkg/processor/worker"
 
-	"github.com/nuclio/nuclio-sdk"
+	"github.com/nuclio/logger"
 	kinesisclient "github.com/sendgridlabs/go-kinesis"
 )
 
@@ -35,7 +36,7 @@ type kinesis struct {
 	shards        []*shard
 }
 
-func newTrigger(parentLogger nuclio.Logger,
+func newTrigger(parentLogger logger.Logger,
 	workerAllocator worker.Allocator,
 	configuration *Configuration) (trigger.Trigger, error) {
 
@@ -72,7 +73,7 @@ func newTrigger(parentLogger nuclio.Logger,
 	return newTrigger, nil
 }
 
-func (k *kinesis) Start(checkpoint trigger.Checkpoint) error {
+func (k *kinesis) Start(checkpoint functionconfig.Checkpoint) error {
 	k.Logger.InfoWith("Starting",
 		"streamName", k.configuration.StreamName,
 		"shards", k.configuration.Shards)
@@ -90,7 +91,7 @@ func (k *kinesis) Start(checkpoint trigger.Checkpoint) error {
 	return nil
 }
 
-func (k *kinesis) Stop(force bool) (trigger.Checkpoint, error) {
+func (k *kinesis) Stop(force bool) (functionconfig.Checkpoint, error) {
 
 	// TODO
 	return nil, nil

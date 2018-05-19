@@ -17,14 +17,14 @@ limitations under the License.
 package main
 
 import (
-	"github.com/nuclio/nuclio-sdk"
+	"github.com/nuclio/nuclio-sdk-go"
 )
 
 func Logging(context *nuclio.Context, event nuclio.Event) (interface{}, error) {
 	context.Logger.DebugWith("Debug message", "level", "debug")
-	context.Logger.InfoWith("Incrementing body", "level", "info")
-	context.Logger.WarnWith("Incrementing body", "level", "warn")
-	context.Logger.ErrorWith("Incrementing body", "level", "error")
+	context.Logger.InfoWith("Info message", "level", "info")
+	context.Logger.WarnWith("Warn message", "level", "warn")
+	context.Logger.ErrorWith("Error message", "level", "error")
 
 	return nil, nil
 }

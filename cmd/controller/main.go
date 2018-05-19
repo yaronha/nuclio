@@ -18,35 +18,49 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"io/ioutil"
 	"os"
 
 	"github.com/nuclio/nuclio/cmd/controller/app"
+	"github.com/nuclio/nuclio/pkg/errors"
 )
 
-func run() error {
-	configPath := flag.String("config", "", "Path of configuration file")
-	flag.Parse()
+func getNamespace(namespaceArgument string) string {
 
-	// get namespace from within the pod if applicable
-	namespace, err := ioutil.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
-	if err != nil {
-		namespace = []byte("default")
+	// if the namespace was passed in the arguments, use that
+	if namespaceArgument != "" {
+		return namespaceArgument
 	}
 
-	controller, err := app.NewController(string(namespace), *configPath)
-	if err != nil {
-		return err
+	// if the namespace exists in env, use that
+	if namespaceEnv := os.Getenv("NUCLIO_CONTROLLER_NAMESPACE"); namespaceEnv != "" {
+		return namespaceEnv
 	}
 
-	return controller.Start()
+	// if nothing was passed, listen on all namespaces
+	return "*"
 }
 
 func main() {
+	kubeconfigPath := flag.String("kubeconfig-path", "", "Path of kubeconfig file")
+	namespace := flag.String("namespace", "", "Namespace to listen on, or * for all")
+	imagePullSecrets := flag.String("image-pull-secrets", os.Getenv("NUCLIO_CONTROLLER_IMAGE_PULL_SECRETS"), "Optional secret name to use for pull")
+	flag.Parse()
 
-	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to run controller: %s", err)
+	// get the namespace from args -> env -> default (*)
+	resolvedNamespace := getNamespace(*namespace)
+
+	// if the namespace is set to @nuclio.selfNamespace, use the namespace we're in right now
+	if resolvedNamespace == "@nuclio.selfNamespace" {
+
+		// get namespace from within the pod. if found, return that
+		if namespacePod, err := ioutil.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace"); err == nil {
+			resolvedNamespace = string(namespacePod)
+		}
+	}
+
+	if err := app.Run(*kubeconfigPath, resolvedNamespace, *imagePullSecrets); err != nil {
+		errors.PrintErrorStack(os.Stderr, err, 5)
 
 		os.Exit(1)
 	}

@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -30,32 +31,28 @@ import (
 	"github.com/nuclio/nuclio/pkg/platform"
 	"github.com/nuclio/nuclio/pkg/playground"
 	"github.com/nuclio/nuclio/pkg/restful"
-	"github.com/nuclio/nuclio/pkg/zap"
 
-	"github.com/nuclio/nuclio-sdk"
+	"github.com/nuclio/logger"
+	"github.com/nuclio/nuclio-sdk-go"
+	"github.com/nuclio/zap"
 	"k8s.io/api/core/v1"
 )
 
-type functionState struct {
-	State string                   `json:"state,omitempty"`
-	Logs  []map[string]interface{} `json:"logs,omitempty"`
-}
-
 type functionAttributes struct {
 	functionconfig.Config
-	Status functionState `json:"status,omitempty"`
+	Status functionconfig.Status `json:"status,omitempty"`
 }
 
 type function struct {
 	functionResource *functionResource
-	logger           nuclio.Logger
+	logger           logger.Logger
 	bufferLogger     *nucliozap.BufferLogger
 	muxLogger        *nucliozap.MuxLogger
 	platform         platform.Platform
 	attributes       functionAttributes
 }
 
-func newFunction(parentLogger nuclio.Logger,
+func newFunction(parentLogger logger.Logger,
 	functionResource *functionResource,
 	functionConfig *functionconfig.Config,
 	platform platform.Platform) (*function, error) {
@@ -82,23 +79,24 @@ func newFunction(parentLogger nuclio.Logger,
 	}
 
 	// update state
-	newFunction.attributes.Status.State = "Initializing"
+	newFunction.attributes.Status.State = functionconfig.FunctionStateWaitingForResourceConfiguration
 
 	return newFunction, nil
 }
 
 func (f *function) Deploy() error {
-	f.attributes.Status.State = "Preparing"
+	f.attributes.Status.State = functionconfig.FunctionStateWaitingForResourceConfiguration
 
-	// create options
-	deployResult, err := f.platform.DeployFunction(f.createDeployOptions())
+	// deploy the runction
+	deployResult, err := f.validateAndDeploy()
 
 	if err != nil {
-		f.attributes.Status.State = fmt.Sprintf("Failed (%s)", errors.Cause(err).Error())
+		f.attributes.Status.State = functionconfig.FunctionStateError
+		f.attributes.Status.Message = fmt.Sprintf("Failed (%s)", errors.Cause(err).Error())
 		f.muxLogger.WarnWith("Failed to deploy function", "err", errors.Cause(err))
 	} else {
-		f.attributes.Spec.HTTPPort = deployResult.Port
-		f.attributes.Status.State = "Ready"
+		f.attributes.Status.HTTPPort = deployResult.Port
+		f.attributes.Status.State = functionconfig.FunctionStateReady
 	}
 
 	// read runner logs (no timeout - if we fail dont retry)
@@ -150,41 +148,51 @@ func (f *function) ReadDeployerLogs(timeout *time.Duration) {
 	}
 }
 
-func (f *function) createDeployOptions() *platform.DeployOptions {
+func (f *function) validateAndDeploy() (*platform.CreateFunctionResult, error) {
+
+	// a bit of validation prior
+	if f.attributes.Meta.Namespace == "" {
+		return nil, errors.New("Function namespace must be defined")
+	}
+
+	// deploy the runction
+	return f.platform.CreateFunction(f.createDeployOptions())
+}
+
+func (f *function) createDeployOptions() *platform.CreateFunctionOptions {
 	server := f.functionResource.GetServer().(*playground.Server)
 
 	// initialize runner options and set defaults
-	deployOptions := &platform.DeployOptions{
+	createFunctionOptions := &platform.CreateFunctionOptions{
 		Logger:         f.logger,
 		FunctionConfig: *functionconfig.NewConfig(),
 	}
 
-	deployOptions.FunctionConfig = f.attributes.Config
-	deployOptions.FunctionConfig.Spec.Replicas = 1
-	deployOptions.FunctionConfig.Spec.Build.NoBaseImagesPull = server.NoPullBaseImages
-	deployOptions.Logger = f.muxLogger
-	deployOptions.FunctionConfig.Spec.Build.Path = "http://127.0.0.1:8070" + f.attributes.Spec.Build.Path
+	readinessTimeout := 30 * time.Second
+
+	createFunctionOptions.FunctionConfig = f.attributes.Config
+	createFunctionOptions.FunctionConfig.Spec.Replicas = 1
+	createFunctionOptions.FunctionConfig.Spec.Build.NoBaseImagesPull = server.NoPullBaseImages
+	createFunctionOptions.Logger = f.muxLogger
+	createFunctionOptions.FunctionConfig.Spec.Build.Path = "http://127.0.0.1:8070" + f.attributes.Spec.Build.Path
+	createFunctionOptions.ReadinessTimeout = &readinessTimeout
 
 	// if user provided registry, use that. Otherwise use default
-	deployOptions.FunctionConfig.Spec.Build.Registry = server.GetRegistryURL()
+	createFunctionOptions.FunctionConfig.Spec.Build.Registry = server.GetRegistryURL()
 	if f.attributes.Spec.Build.Registry != "" {
-		deployOptions.FunctionConfig.Spec.Build.Registry = f.attributes.Spec.Build.Registry
+		createFunctionOptions.FunctionConfig.Spec.Build.Registry = f.attributes.Spec.Build.Registry
 	}
 
 	// if user provided run registry, use that. if there's a default - use that. otherwise, use build registry
 	if f.attributes.Spec.RunRegistry != "" {
-		deployOptions.FunctionConfig.Spec.RunRegistry = f.attributes.Spec.RunRegistry
+		createFunctionOptions.FunctionConfig.Spec.RunRegistry = f.attributes.Spec.RunRegistry
 	} else if server.GetRunRegistryURL() != "" {
-		deployOptions.FunctionConfig.Spec.RunRegistry = server.GetRunRegistryURL()
+		createFunctionOptions.FunctionConfig.Spec.RunRegistry = server.GetRunRegistryURL()
 	} else {
-		deployOptions.FunctionConfig.Spec.RunRegistry = deployOptions.FunctionConfig.Spec.Build.Registry
+		createFunctionOptions.FunctionConfig.Spec.RunRegistry = createFunctionOptions.FunctionConfig.Spec.Build.Registry
 	}
 
-	if f.attributes.Meta.Namespace == "" {
-		deployOptions.FunctionConfig.Meta.Namespace = "default"
-	}
-
-	return deployOptions
+	return createFunctionOptions
 }
 
 func (f *function) getAttributes() restful.Attributes {
@@ -200,10 +208,11 @@ type functionResource struct {
 	functions     map[string]*function
 	functionsLock sync.Locker
 	platform      platform.Platform
+	isDeploying   bool
 }
 
 // called after initialization
-func (fr *functionResource) OnAfterInitialize() {
+func (fr *functionResource) OnAfterInitialize() error {
 	fr.functions = map[string]*function{}
 	fr.functionsLock = &sync.Mutex{}
 	fr.platform = fr.getPlatform()
@@ -309,8 +318,8 @@ func (fr *functionResource) OnAfterInitialize() {
 			Spec: functionconfig.Spec{
 				Runtime: "python:3.6",
 				Build: functionconfig.Build{
-					Path:          "/sources/tensor.py",
-					BaseImageName: "jessie",
+					Path:      "/sources/tensor.py",
+					BaseImage: "jessie",
 					Commands: []string{
 						"apt-get update && apt-get install -y wget",
 						"wget http://download.tensorflow.org/models/image/imagenet/inception-2015-12-05.tgz",
@@ -354,16 +363,55 @@ func (fr *functionResource) OnAfterInitialize() {
 				},
 			},
 		},
+		{
+			Meta: functionconfig.Meta{
+				Name: "serialize-object",
+			},
+			Spec: functionconfig.Spec{
+				Runtime: "dotnetcore",
+				Handler: "nuclio:SerializeObject",
+				Build: functionconfig.Build{
+					Path: "/sources/SerializeObject.cs",
+				},
+			},
+		},
+		{
+			Meta: functionconfig.Meta{
+				Name: "reverser",
+			},
+			Spec: functionconfig.Spec{
+				Runtime: "java",
+				Handler: "ReverseEventHandler",
+				Build: functionconfig.Build{
+					Path: "/sources/ReverseEventHandler.java",
+				},
+			},
+		},
+		{
+			Meta: functionconfig.Meta{
+				Name: "s3watch",
+			},
+			Spec: functionconfig.Spec{
+				Runtime: "golang",
+				Handler: "Handler",
+				Build: functionconfig.Build{
+					Path: "/sources/s3watch.go",
+				},
+			},
+		},
 	} {
 		builtinFunction := &function{}
 		builtinFunction.attributes.Meta = builtinFunctionConfig.Meta
+		builtinFunction.attributes.Meta.Namespace = "nuclio"
 		builtinFunction.attributes.Spec = builtinFunctionConfig.Spec
 
 		fr.functions[builtinFunctionConfig.Meta.Name] = builtinFunction
 	}
+
+	return nil
 }
 
-func (fr *functionResource) GetAll(request *http.Request) map[string]restful.Attributes {
+func (fr *functionResource) GetAll(request *http.Request) (map[string]restful.Attributes, error) {
 	fr.functionsLock.Lock()
 	defer fr.functionsLock.Unlock()
 
@@ -373,17 +421,17 @@ func (fr *functionResource) GetAll(request *http.Request) map[string]restful.Att
 		response[functionID] = function.getAttributes()
 	}
 
-	return response
+	return response, nil
 }
 
 // return specific instance by ID
-func (fr *functionResource) GetByID(request *http.Request, id string) restful.Attributes {
+func (fr *functionResource) GetByID(request *http.Request, id string) (restful.Attributes, error) {
 	fr.functionsLock.Lock()
 	defer fr.functionsLock.Unlock()
 
 	function, found := fr.functions[id]
 	if !found {
-		return nil
+		return nil, nil
 	}
 
 	readLogsTimeout := time.Second
@@ -391,7 +439,7 @@ func (fr *functionResource) GetByID(request *http.Request, id string) restful.At
 	// update the logs (give it a second to be valid)
 	function.ReadDeployerLogs(&readLogsTimeout)
 
-	return function.getAttributes()
+	return function.getAttributes(), nil
 }
 
 // returns resource ID, attributes
@@ -424,8 +472,20 @@ func (fr *functionResource) Create(request *http.Request) (id string, attributes
 		return
 	}
 
+	if fr.isDeploying {
+		fr.Logger.Warn("Failed to deploy function - another function currently deploying")
+
+		responseErr = nuclio.ErrTooManyRequests
+		return
+	}
+	fr.isDeploying = true
+
 	// run the function in the background
-	go newFunction.Deploy()
+	go func() {
+		defer fr.recoverFromDeploy()
+
+		newFunction.Deploy() // nolint: errcheck
+	}()
 
 	// lock map while we're adding
 	fr.functionsLock.Lock()
@@ -435,6 +495,16 @@ func (fr *functionResource) Create(request *http.Request) (id string, attributes
 	fr.functions[newFunction.attributes.Meta.Name] = newFunction
 
 	return newFunction.attributes.Meta.Name, newFunction.getAttributes(), nil
+}
+
+func (fr *functionResource) recoverFromDeploy() {
+	if r := recover(); r != nil {
+		fr.Logger.ErrorWith("Recovered from panic during deploy",
+			"err", r,
+			"stack", string(debug.Stack()))
+	}
+
+	fr.isDeploying = false
 }
 
 // register the resource

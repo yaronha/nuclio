@@ -17,7 +17,7 @@ limitations under the License.
 package command
 
 import (
-	"fmt"
+	"encoding/json"
 	"os"
 
 	"github.com/nuclio/nuclio/pkg/errors"
@@ -28,10 +28,11 @@ import (
 )
 
 type buildCommandeer struct {
-	cmd            *cobra.Command
-	rootCommandeer *RootCommandeer
-	commands       stringSliceFlag
-	functionConfig functionconfig.Config
+	cmd                      *cobra.Command
+	rootCommandeer           *RootCommandeer
+	commands                 stringSliceFlag
+	functionConfig           functionconfig.Config
+	encodedRuntimeAttributes string
 }
 
 func newBuildCommandeer(rootCommandeer *RootCommandeer) *buildCommandeer {
@@ -46,17 +47,11 @@ func newBuildCommandeer(rootCommandeer *RootCommandeer) *buildCommandeer {
 		Short:   "Build a function",
 		RunE: func(cmd *cobra.Command, args []string) error {
 
-			// if we got positional arguments
-			switch len(args) {
-			case 0:
-				return fmt.Errorf("Missing function path")
-			case 1: /* noop */
-			default:
-				return fmt.Errorf("Too many arguments")
+			// update build stuff
+			if len(args) == 1 {
+				commandeer.functionConfig.Meta.Name = args[0]
 			}
 
-			// update build stuff
-			commandeer.functionConfig.Meta.Name = args[0]
 			commandeer.functionConfig.Meta.Namespace = rootCommandeer.namespace
 			commandeer.functionConfig.Spec.Build.Commands = commandeer.commands
 
@@ -65,34 +60,41 @@ func newBuildCommandeer(rootCommandeer *RootCommandeer) *buildCommandeer {
 				return errors.Wrap(err, "Failed to initialize root")
 			}
 
-			_, err := rootCommandeer.platform.BuildFunction(&platform.BuildOptions{
-				Logger:         rootCommandeer.logger,
+			// decode the JSON build runtime attributes
+			if err := json.Unmarshal([]byte(commandeer.encodedRuntimeAttributes),
+				&commandeer.functionConfig.Spec.Build.RuntimeAttributes); err != nil {
+				return errors.Wrap(err, "Failed to decode build runtime attributes")
+			}
+
+			_, err := rootCommandeer.platform.CreateFunctionBuild(&platform.CreateFunctionBuildOptions{
+				Logger:         rootCommandeer.loggerInstance,
 				FunctionConfig: commandeer.functionConfig,
+				PlatformName:   rootCommandeer.platform.GetName(),
 			})
 			return err
 		},
 	}
 
-	addBuildFlags(cmd, &commandeer.functionConfig, &commandeer.commands)
+	addBuildFlags(cmd, &commandeer.functionConfig, &commandeer.commands, &commandeer.encodedRuntimeAttributes)
 
 	commandeer.cmd = cmd
 
 	return commandeer
 }
 
-func addBuildFlags(cmd *cobra.Command, config *functionconfig.Config, commands *stringSliceFlag) { // nolint
+func addBuildFlags(cmd *cobra.Command, config *functionconfig.Config, commands *stringSliceFlag, encodedRuntimeAttributes *string) { // nolint
 	cmd.Flags().StringVarP(&config.Spec.Build.Path, "path", "p", "", "Path to the function's source code")
+	cmd.Flags().StringVarP(&config.Spec.Build.FunctionSourceCode, "source", "", "", "The function's source code (overrides \"path\")")
 	cmd.Flags().StringVarP(&config.Spec.Build.FunctionConfigPath, "file", "f", "", "Path to a function-configuration file")
-	cmd.Flags().StringVarP(&config.Spec.Build.ImageName, "image", "i", "", "Name of a Docker image (default - the function name)")
-	cmd.Flags().StringVar(&config.Spec.Build.ImageVersion, "version", "latest", "Version of the Docker image")
-	cmd.Flags().StringVarP(&config.Spec.Build.OutputType, "output", "o", "docker", "Type of the build output - \"docker\" or \"binary\"")
+	cmd.Flags().StringVarP(&config.Spec.Build.Image, "image", "i", "", "Name of a Docker image (default - the function name)")
 	cmd.Flags().StringVarP(&config.Spec.Build.Registry, "registry", "r", os.Getenv("NUCTL_REGISTRY"), "URL of a container registry (env: NUCTL_REGISTRY)")
-	cmd.Flags().StringVar(&config.Spec.Build.NuclioSourceDir, "nuclio-src-dir", "", "Path to a local directory that contains nuclio sources (avoid cloning)")
-	cmd.Flags().StringVar(&config.Spec.Build.NuclioSourceURL, "nuclio-src-url", "https://github.com/nuclio/nuclio.git", "URL of nuclio sources for git clone")
 	cmd.Flags().StringVarP(&config.Spec.Runtime, "runtime", "", "", "Runtime (for example, \"golang\", \"golang:1.8\", \"python:2.7\")")
 	cmd.Flags().StringVarP(&config.Spec.Handler, "handler", "", "", "Name of a function handler")
 	cmd.Flags().BoolVarP(&config.Spec.Build.NoBaseImagesPull, "no-pull", "", false, "Don't pull base images - use local versions")
 	cmd.Flags().BoolVarP(&config.Spec.Build.NoCleanup, "no-cleanup", "", false, "Don't clean up temporary directories")
-	cmd.Flags().StringVarP(&config.Spec.Build.BaseImageName, "base-image", "", "", "Name of the base image (default - per-runtime default)")
+	cmd.Flags().StringVarP(&config.Spec.Build.BaseImage, "base-image", "", "", "Name of the base image (default - per-runtime default)")
 	cmd.Flags().Var(commands, "build-command", "Commands to run when building the processor image")
+	cmd.Flags().StringVarP(&config.Spec.Build.OnbuildImage, "onbuild-image", "", "", "The runtime onbuild image used to build the processor image")
+	cmd.Flags().BoolVarP(&config.Spec.Build.Offline, "offline", "", false, "Don't assume internet connectivity exists")
+	cmd.Flags().StringVar(encodedRuntimeAttributes, "build-runtime-attrs", "{}", "JSON-encoded build runtime attributes for the function")
 }

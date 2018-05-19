@@ -28,8 +28,10 @@ import (
 	"github.com/nuclio/nuclio/pkg/common"
 	"github.com/nuclio/nuclio/pkg/errors"
 	"github.com/nuclio/nuclio/pkg/processor/runtime"
+	"github.com/nuclio/nuclio/pkg/processor/status"
 
-	"github.com/nuclio/nuclio-sdk"
+	"github.com/nuclio/logger"
+	"github.com/nuclio/nuclio-sdk-go"
 	"github.com/rs/xid"
 )
 
@@ -54,10 +56,10 @@ type result struct {
 // Runtime is a runtime that communicates via unix domain socket
 type Runtime struct {
 	runtime.AbstractRuntime
-	configuration *runtime.Configuration
-	eventEncoder  *EventJSONEncoder
-	outReader     *bufio.Reader
-	socketPath    string
+	configuration  *runtime.Configuration
+	eventEncoder   *EventJSONEncoder
+	outReader      *bufio.Reader
+	wrapperProcess *os.Process
 }
 
 type rpcLogRecord struct {
@@ -67,8 +69,17 @@ type rpcLogRecord struct {
 	With     map[string]interface{} `json:"with"`
 }
 
+// SocketType is type of socket to use
+type SocketType int
+
+// RPC socket types
+const (
+	UnixSocket SocketType = iota
+	TCPSocket
+)
+
 // NewRPCRuntime returns a new RPC runtime
-func NewRPCRuntime(logger nuclio.Logger, configuration *runtime.Configuration, runWrapper func(string) error) (*Runtime, error) {
+func NewRPCRuntime(logger logger.Logger, configuration *runtime.Configuration, runWrapper func(string) (*os.Process, error), socketType SocketType) (*Runtime, error) {
 	var err error
 
 	abstractRuntime, err := runtime.NewAbstractRuntime(logger, configuration)
@@ -81,37 +92,42 @@ func NewRPCRuntime(logger nuclio.Logger, configuration *runtime.Configuration, r
 		configuration:   configuration,
 	}
 
-	// create socket path
-	newRuntime.socketPath = newRuntime.createSocketPath()
+	var listener net.Listener
+	var address string
 
-	listener, err := newRuntime.createListener()
-	if err != nil {
-		return nil, errors.Wrapf(err, "Can't listen on %q", newRuntime.socketPath)
+	if socketType == UnixSocket {
+		listener, address, err = newRuntime.createUnixListener()
+	} else {
+		listener, address, err = newRuntime.createTCPListener()
 	}
 
-	if err = runWrapper(newRuntime.socketPath); err != nil {
+	if err != nil {
+		return nil, errors.Wrap(err, "Can't create listener")
+	}
+
+	wrapperProcess, err := runWrapper(address)
+	if err != nil {
 		return nil, errors.Wrap(err, "Can't run wrapper")
 	}
+	newRuntime.wrapperProcess = wrapperProcess
 
-	unixListener, ok := listener.(*net.UnixListener)
-	if !ok {
-		return nil, errors.Wrap(err, "Can't get underlying Unix listener")
-	}
-	if err = unixListener.SetDeadline(time.Now().Add(connectionTimeout)); err != nil {
-		return nil, errors.Wrap(err, "Can't set deadline")
-	}
 	conn, err := listener.Accept()
 	if err != nil {
 		return nil, errors.Wrap(err, "Can't get connection from wrapper")
 	}
+	newRuntime.Logger.Info("Wrapper connected")
 
 	newRuntime.eventEncoder = NewEventJSONEncoder(newRuntime.Logger, conn)
 	newRuntime.outReader = bufio.NewReader(conn)
 
+	newRuntime.SetStatus(status.Ready)
+
 	return newRuntime, nil
 }
 
-func (r *Runtime) ProcessEvent(event nuclio.Event, functionLogger nuclio.Logger) (interface{}, error) {
+// ProcessEvent processes an event
+func (r *Runtime) ProcessEvent(event nuclio.Event, functionLogger logger.Logger) (interface{}, error) {
+	// TODO: Check that status is Ready?
 	r.Logger.DebugWith("Processing event",
 		"name", r.configuration.Meta.Name,
 		"version", r.configuration.Spec.Version,
@@ -137,23 +153,55 @@ func (r *Runtime) ProcessEvent(event nuclio.Event, functionLogger nuclio.Logger)
 	}
 }
 
-func (r *Runtime) createListener() (net.Listener, error) {
-	if common.FileExists(r.socketPath) {
-		if err := os.Remove(r.socketPath); err != nil {
-			return nil, errors.Wrapf(err, "Can't remove socket at %q", r.socketPath)
+// Create a listener on unix domian docker, return listener, path to socket and error
+func (r *Runtime) createUnixListener() (net.Listener, string, error) {
+	socketPath := fmt.Sprintf(socketPathTemplate, xid.New().String())
+
+	if common.FileExists(socketPath) {
+		if err := os.Remove(socketPath); err != nil {
+			return nil, "", errors.Wrapf(err, "Can't remove socket at %q", socketPath)
 		}
 	}
 
-	r.Logger.DebugWith("Creating listener socket", "path", r.socketPath)
+	r.Logger.DebugWith("Creating listener socket", "path", socketPath)
 
-	return net.Listen("unix", r.socketPath)
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		return nil, "", errors.Wrapf(err, "Can't listen on %s", socketPath)
+	}
+
+	unixListener, ok := listener.(*net.UnixListener)
+	if !ok {
+		return nil, "", fmt.Errorf("Can't get underlying Unix listener")
+	}
+	if err = unixListener.SetDeadline(time.Now().Add(connectionTimeout)); err != nil {
+		return nil, "", errors.Wrap(err, "Can't set deadline")
+	}
+
+	return listener, socketPath, nil
 }
 
-func (r *Runtime) createSocketPath() string {
-	return fmt.Sprintf(socketPathTemplate, xid.New().String())
+// Create a listener on TCP docker, return listener, port and error
+func (r *Runtime) createTCPListener() (net.Listener, string, error) {
+	listener, err := net.Listen("tcp", ":0")
+	if err != nil {
+		return nil, "", errors.Wrap(err, "Can't find free port")
+	}
+
+	tcpListener, ok := listener.(*net.TCPListener)
+	if !ok {
+		return nil, "", errors.Wrap(err, "Can't get underlying TCP listener")
+	}
+	if err = tcpListener.SetDeadline(time.Now().Add(connectionTimeout)); err != nil {
+		return nil, "", errors.Wrap(err, "Can't set deadline")
+	}
+
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	return listener, fmt.Sprintf("%d", port), nil
 }
 
-func (r *Runtime) handleEvent(functionLogger nuclio.Logger, event nuclio.Event, resultChan chan *result) {
+func (r *Runtime) handleEvent(functionLogger logger.Logger, event nuclio.Event, resultChan chan *result) {
 	unmarshalledResult := &result{}
 
 	// Send event
@@ -207,7 +255,7 @@ func (r *Runtime) handleEvent(functionLogger nuclio.Logger, event nuclio.Event, 
 	}
 }
 
-func (r *Runtime) handleResponseLog(functionLogger nuclio.Logger, response []byte) {
+func (r *Runtime) handleResponseLog(functionLogger logger.Logger, response []byte) {
 	var logRecord rpcLogRecord
 
 	if err := json.Unmarshal(response, &logRecord); err != nil {
@@ -231,7 +279,7 @@ func (r *Runtime) handleResponseLog(functionLogger nuclio.Logger, response []byt
 	logFunc(logRecord.Message, vars...)
 }
 
-func (r *Runtime) handleReponseMetric(functionLogger nuclio.Logger, response []byte) {
+func (r *Runtime) handleReponseMetric(functionLogger logger.Logger, response []byte) {
 	var metrics struct {
 		DurationSec float64 `json:"duration"`
 	}
@@ -252,9 +300,21 @@ func (r *Runtime) handleReponseMetric(functionLogger nuclio.Logger, response []b
 }
 
 // resolveFunctionLogger return either functionLogger if provided or root logger if not
-func (r *Runtime) resolveFunctionLogger(functionLogger nuclio.Logger) nuclio.Logger {
+func (r *Runtime) resolveFunctionLogger(functionLogger logger.Logger) logger.Logger {
 	if functionLogger == nil {
 		return r.Logger
 	}
 	return functionLogger
+}
+
+// Stop stops the runtime
+func (r *Runtime) Stop() error {
+	err := r.wrapperProcess.Kill()
+	if err != nil {
+		r.SetStatus(status.Error)
+	} else {
+		r.SetStatus(status.Stopped)
+	}
+
+	return err
 }

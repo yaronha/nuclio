@@ -8,8 +8,6 @@
 
 <p align="center">
 Visit <a href="https://nuclio.io">nuclio.io</a> for product information and news and a friendly web presentation of the nuclio <a href="https://nuclio.io/docs/latest/">documentation</a>.
-<br/>
-Check out the <b><a href="#global-nuclio-hackathon">global nuclio hackathon</a></b> for a some serverless fun and a chance to win a Phantom 4 drone!
 </p>
 
 #### In this document
@@ -18,16 +16,15 @@ Check out the <b><a href="#global-nuclio-hackathon">global nuclio hackathon</a><
 - [Quick-start steps](#quick-start-steps)
 - [High-level architecture](#high-level-architecture)
 - [Function examples](#function-examples)
-- [Global nuclio hackathon](#global-nuclio-hackathon)
 - [Further reading](#further-reading)
 
 ## Overview
 
-nuclio is a new "serverless" project, derived from iguazio's elastic data life-cycle management service for high-performance events and data processing. You can use nuclio as a standalone binary (for example, for IoT devices), package it within a Docker container, or integrate it with a container orchestrator like [Kubernetes](https://kubernetes.io).
+nuclio is a new "serverless" project, derived from iguazio's elastic data life-cycle management service for high-performance events and data processing. You can use nuclio as a standalone Docker container or on top of an existing [Kubernetes](https://kubernetes.io) cluster. See deployment instructions in the nuclio documentation.
 
-nuclio is extremely fast. A single function instance can process hundreds of thousands of HTTP requests or data records per second. This is 10-100 times faster than some other frameworks. To learn more about how nuclio works, see the nuclio [architecture](/docs/concepts/architecture.md) documentation and watch the [technical CNCF nuclio presentation and demo](https://www.youtube.com/watch?v=xlOp9BR5xcs) (slides can be found [here](https://www.slideshare.net/iguazio/nuclio-overview-october-2017-80356865)).
+nuclio is extremely fast. A single function instance can process hundreds of thousands of HTTP requests or data records per second. This is 10-100 times faster than some other frameworks. To learn more about how nuclio works, see the nuclio [architecture](/docs/concepts/architecture.md) documentation, go over a [recent presentation](https://www.slideshare.net/iguazio/running-highspeed-serverless-with-nuclio) or watch [nuclio Serverless and AI webinar](https://www.youtube.com/watch?v=pTCx569Kd4A). Additional articles and tutorials are listed in [nuclio web site](https://nuclio.io/).
 
-> **Note:** nuclio is still under active development and is not recommended for production use.
+For further questions and support, [click to join](https://lit-oasis-83353.herokuapp.com) the [nuclio Slack](https://nuclio-io.slack.com) workspace.
 
 ## Why another "serverless" project?
 
@@ -43,17 +40,17 @@ We designed nuclio to be extendable, using a modular and layered approach that s
 
 ## Quick-start steps
 
-The simplest way to explore nuclio is to run its graphical user interface (GUI) of the nuclio [playground](#playground). All you need in order to run the playground is Docker:
+The simplest way to explore nuclio is to run its graphical user interface (GUI) of the nuclio [dashboard](#dashboard). All you need in order to run the dashboard is Docker:
 
-```bash
-docker run -p 8070:8070 -v /var/run/docker.sock:/var/run/docker.sock -v /tmp:/tmp nuclio/playground:stable-amd64
+```sh
+docker run -p 8070:8070 -v /var/run/docker.sock:/var/run/docker.sock -v /tmp:/tmp nuclio/dashboard:stable-amd64
 ```
 
-![playground](/docs/assets/images/playground.png)
+![dashboard](/docs/assets/images/dashboard.png)
 
-Browse to http://localhost:8070 and deploy one of the example functions, or write your own function. When run outside of an orchestration platform (for example, Kubernetes or Swarm), the playground will simply deploy to the local Docker daemon.
+Browse to http://localhost:8070, create a project, and add a function. When run outside of an orchestration platform (for example, Kubernetes or Swarm), the dashboard will simply deploy to the local Docker daemon.
 
-For a complete step-by-step guide to using nuclio over Kubernetes, either with the playground UI or the nuclio command-line interface (`nuctl`), see [Getting Started with nuclio on Kubernetes](/docs/setup/k8s/getting-started-k8s.md) or [Getting Started with nuclio on Google Kubernetes Engine (GKE)](/docs/setup/gke/getting-started-gke.md).
+For a complete step-by-step guide to using nuclio over Kubernetes, either with the dashboard UI or the nuclio command-line interface (`nuctl`), see [Getting Started with nuclio on Kubernetes](/docs/setup/k8s/getting-started-k8s.md), [Getting Started with nuclio on Google Kubernetes Engine (GKE)](/docs/setup/gke/getting-started-gke.md), or [Getting started with nuclio on Azure Container Services (AKS)](/docs/setup/aks/getting-started-aks.md).
 
 ## High-level architecture
 
@@ -75,9 +72,9 @@ The workers use language-specific runtimes to execute the function (via native c
 
 A controller accepts function and event-source specifications, invokes builders and processors through an orchestration platform (such as Kubernetes), and manages function elasticity, life cycle, and versions.
 
-#### Playground
+#### Dashboard
 
-The playground is a standalone container microservice that is accessed through HTTP and includes a code-editor GUI for editing, deploying, and testing functions. This is the most user-friendly way to work with nuclio. The playground container comes packaged with a version of the nuclio [builder](#builder).
+The dashboard is a standalone microservice that is accessed through HTTP and includes a code-editor GUI for editing, deploying, and testing functions. This is the most user-friendly way to work with nuclio. The dashboard container comes packaged with a version of the nuclio [builder](#builder).
 
 #### Builder
 
@@ -111,7 +108,7 @@ In Go
 package handler
 
 import (
-    "github.com/nuclio/nuclio-sdk"
+    "github.com/nuclio/nuclio-sdk-go"
 )
 
 func Handler(context *nuclio.Context, event nuclio.Event) (interface{}, error) {
@@ -142,40 +139,29 @@ def handler(context, event):
 
 More examples can be found in the **[hack/examples](hack/examples/README.md)** nuclio GitHub directory.
 
-## Global nuclio Hackathon
-
-[Sign up](https://nuclio.devpost.com/) for the global online nuclio hackathon, build the greatest serverless application, and you just might win a Phantom 4 drone! 
-
-Judges include
-
--	**Brendan Burns**<br/>
-  Kubernetes Co-Founder
-
--	**Lee Calcote**<br/>
-  Head of Technology Strategy, SolarWinds
-
--	**Yaron Haviv**<br/>
-  CTO, iguazio
-
--	**Orit Nissan-Messing**<br/>
-  Chief Architect, iguazio
-
-Submissions will be accepted until Jan 29 2018. [Register](https://nuclio.devpost.com/) now.
-
 ## Further reading
 
 - Setup
+    - [Getting Started with nuclio on Minikube](/docs/setup/minikube/getting-started-minikube.md)
     - [Getting Started with nuclio on Kubernetes](/docs/setup/k8s/getting-started-k8s.md)
+    - [Getting Started with nuclio on Azure Kubernetes Service (AKS)](/docs/setup/aks/getting-started-aks.md)
     - [Getting Started with nuclio on Google Kubernetes Engine (GKE)](/docs/setup/gke/getting-started-gke.md)
-    - Getting Started with nuclio On Raspberry Pi (coming soon)
+    - Getting Started with nuclio on Raspberry Pi (coming soon)
+- Tasks
+    - [Deploying Functions](/docs/tasks/deploying-functions.md)
+    - [Deploying Functions from Dockerfile](/docs/tasks/deploy-functions-from-dockerfile.md)
+    - [Deploying Pre-Built Functions](/docs/tasks/deploying-pre-built-functions.md)
+    - [Configuring a Platform](/docs/tasks/configuring-a-platform.md)
 - Concepts
-    - [Architecture details](/docs/concepts/architecture.md)
-    - [Configuring a Function](/docs/concepts/configuring-a-function.md)
-    - Build Process (coming soon)
-    - Deploy Process (coming soon)
+    - [Architecture](/docs/concepts/architecture.md)
     - Kubernetes
         - [Invoking Functions by Name with a Kubernetes Ingress](/docs/concepts/k8s/function-ingress.md)
-        - [Private Docker Registries](/docs/concepts/k8s/private-docker-registries.md)
+- References
+    - [Function-Configuration Reference](/docs/reference/function-configuration/function-configuration-reference.md)
+    - [Triggers](/docs/reference/triggers)
+    - [nuctl](/docs/reference/nuctl)
+    - [Runtime - .NET Core 2](/docs/reference/runtimes/dotnetcore/writing-a-dotnetcore-function.md)
+    - [Runtime - Shell](/docs/reference/runtimes/shell/writing-a-shell-function.md)
 - [Examples](hack/examples/README.md)
 - [Roadmap](ROADMAP.md)
 - Contributing
@@ -184,7 +170,12 @@ Submissions will be accepted until Jan 29 2018. [Register](https://nuclio.devpos
 - Reference
     - [nuctl Reference](/docs/reference/nuctl/nuctl.md)
 - Media
-    - [nuclio and the Future of Serverless Computing](https://thenewstack.io/whats-next-serverless/)
-    - [nuclio: The New Serverless Superhero](https://hackernoon.com/nuclio-the-new-serverless-superhero-3aefe1854e9a)
+    - [Running High-Speed Serverless with nuclio (slides)](https://www.slideshare.net/iguazio/running-highspeed-serverless-with-nuclio)
+    - [CNCF Webinar – Serverless and AI (video)](https://www.youtube.com/watch?v=pTCx569Kd4A)
+    - [Faster AI Development With Serverless (tutorial)](https://dzone.com/articles/tutorial-faster-ai-development-with-serverless)
+    - [nuclio and the Future of Serverless Computing (blog)](https://thenewstack.io/whats-next-serverless/)
+    - [nuclio: The New Serverless Superhero (blog)](https://hackernoon.com/nuclio-the-new-serverless-superhero-3aefe1854e9a)
+    - [Serverless Framework for Real-Time Apps Emerges (Blog)](https://www.rtinsights.com/serverless-framework-for-real-time-apps-emerges/)
 
 For support and additional product information, [join](https://lit-oasis-83353.herokuapp.com) the active [nuclio Slack](https://nuclio-io.slack.com) workspace.
+

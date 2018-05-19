@@ -32,7 +32,7 @@ type tunnelResource struct {
 }
 
 // called after initialization
-func (tr *tunnelResource) OnAfterInitialize() {
+func (tr *tunnelResource) OnAfterInitialize() error {
 
 	// all methods
 	for _, registrar := range []func(string, http.HandlerFunc){
@@ -45,6 +45,8 @@ func (tr *tunnelResource) OnAfterInitialize() {
 	} {
 		registrar("/*", tr.handleRequest)
 	}
+
+	return nil
 }
 
 func (tr *tunnelResource) handleRequest(responseWriter http.ResponseWriter, request *http.Request) {
@@ -52,7 +54,7 @@ func (tr *tunnelResource) handleRequest(responseWriter http.ResponseWriter, requ
 	// get host and URL from request
 	host, path, err := tr.getTunneledHostAndPath(request.URL.Path)
 	if err != nil {
-		responseWriter.Write([]byte(`{"error": Invalid path - expected /tunnel/<host>/<path>""}`))
+		responseWriter.Write([]byte(`{"error": Invalid path - expected /tunnel/<host>/<path>""}`)) // nolint: errcheck
 		responseWriter.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -97,7 +99,7 @@ func (tr *tunnelResource) handleRequest(responseWriter http.ResponseWriter, requ
 	}
 
 	responseWriter.WriteHeader(tunneledHTTPResponse.StatusCode)
-	responseWriter.Write(responseBody)
+	responseWriter.Write(responseBody) // nolint: errcheck
 }
 
 func (tr *tunnelResource) getTunneledHostAndPath(fullPath string) (host string, path string, err error) {

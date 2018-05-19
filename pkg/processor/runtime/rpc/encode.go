@@ -21,17 +21,18 @@ import (
 	"encoding/json"
 	"io"
 
-	"github.com/nuclio/nuclio-sdk"
+	"github.com/nuclio/logger"
+	"github.com/nuclio/nuclio-sdk-go"
 )
 
 // EventJSONEncoder encodes nuclio events as JSON
 type EventJSONEncoder struct {
-	logger nuclio.Logger
+	logger logger.Logger
 	writer io.Writer
 }
 
 // NewEventJSONEncoder returns a new JSONEncoder
-func NewEventJSONEncoder(logger nuclio.Logger, writer io.Writer) *EventJSONEncoder {
+func NewEventJSONEncoder(logger logger.Logger, writer io.Writer) *EventJSONEncoder {
 	return &EventJSONEncoder{logger, writer}
 }
 
@@ -39,25 +40,38 @@ func NewEventJSONEncoder(logger nuclio.Logger, writer io.Writer) *EventJSONEncod
 func (je *EventJSONEncoder) Encode(event nuclio.Event) error {
 	je.logger.DebugWith("Sending event to wrapper", "size", len(event.GetBody()))
 
-	src := event.GetSource()
-	body := base64.StdEncoding.EncodeToString(event.GetBody())
-	obj := map[string]interface{}{
-		"body":         body,
+	triggerInfo := event.GetTriggerInfo()
+
+	eventToEncode := map[string]interface{}{
+		"content_type": event.GetContentType(),
 		"content-type": event.GetContentType(),
 		"trigger": map[string]string{
-			"class": src.GetClass(),
-			"kind":  src.GetKind(),
+			"class": triggerInfo.GetClass(),
+			"kind":  triggerInfo.GetKind(),
 		},
-		"fields":    event.GetFields(),
-		"headers":   event.GetHeaders(),
-		"id":        event.GetID().String(),
-		"method":    event.GetMethod(),
-		"path":      event.GetPath(),
-		"size":      event.GetSize(),
-		"timestamp": event.GetTimestamp().UTC().Unix(),
-		"url":       event.GetURL(),
-		"version":   event.GetVersion(),
+		"fields":       event.GetFields(),
+		"headers":      event.GetHeaders(),
+		"id":           event.GetID(),
+		"method":       event.GetMethod(),
+		"path":         event.GetPath(),
+		"size":         len(event.GetBody()),
+		"timestamp":    event.GetTimestamp().UTC().Unix(),
+		"url":          event.GetURL(),
+		"shard_id":     event.GetShardID(),
+		"num_shards":   event.GetTotalNumShards(),
+		"type":         event.GetType(),
+		"type_version": event.GetTypeVersion(),
+		"version":      event.GetVersion(),
 	}
 
-	return json.NewEncoder(je.writer).Encode(obj)
+	// if the body is map[string]interface{} we probably got a cloud event with a structured data member
+	if bodyObject, isMapStringInterface := event.GetBodyObject().(map[string]interface{}); isMapStringInterface {
+		eventToEncode["body"] = bodyObject
+	} else {
+
+		// otherwise, just encode body to base64
+		eventToEncode["body"] = base64.StdEncoding.EncodeToString(event.GetBody())
+	}
+
+	return json.NewEncoder(je.writer).Encode(eventToEncode)
 }

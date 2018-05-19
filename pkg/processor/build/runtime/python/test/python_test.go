@@ -25,24 +25,31 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-type TestSuite struct {
+type testSuite struct {
 	buildsuite.TestSuite
+	runtime string
 }
 
-func (suite *TestSuite) SetupSuite() {
+func newTestSuite(runtime string) *testSuite {
+	return &testSuite{
+		runtime: runtime,
+	}
+}
+
+func (suite *testSuite) SetupSuite() {
 	suite.TestSuite.SetupSuite()
 
 	suite.TestSuite.RuntimeSuite = suite
 }
 
-func (suite *TestSuite) TestBuildPy2() {
-	deployOptions := suite.GetDeployOptions("printer",
+func (suite *testSuite) TestBuildPy2() {
+	createFunctionOptions := suite.GetDeployOptions("printer",
 		suite.GetFunctionPath(suite.GetTestFunctionsDir(), "python", "py2-printer"))
 
-	deployOptions.FunctionConfig.Spec.Runtime = "python:2.7"
-	deployOptions.FunctionConfig.Spec.Handler = "printer:handler"
+	createFunctionOptions.FunctionConfig.Spec.Runtime = "python:2.7"
+	createFunctionOptions.FunctionConfig.Spec.Handler = "printer:handler"
 
-	suite.DeployFunctionAndRequest(deployOptions,
+	suite.DeployFunctionAndRequest(createFunctionOptions,
 		&httpsuite.Request{
 			RequestMethod:        "POST",
 			RequestBody:          "",
@@ -50,9 +57,9 @@ func (suite *TestSuite) TestBuildPy2() {
 		})
 }
 
-func (suite *TestSuite) GetFunctionInfo(functionName string) buildsuite.FunctionInfo {
+func (suite *testSuite) GetFunctionInfo(functionName string) buildsuite.FunctionInfo {
 	functionInfo := buildsuite.FunctionInfo{
-		Runtime: "python",
+		Runtime: suite.runtime,
 	}
 
 	switch functionName {
@@ -66,6 +73,9 @@ func (suite *TestSuite) GetFunctionInfo(functionName string) buildsuite.Function
 
 	case "json-parser-with-inline-function-config":
 		functionInfo.Path = []string{suite.GetTestFunctionsDir(), "common", "json-parser-with-inline-function-config", "python", "parser.py"}
+
+	case "long-initialization":
+		functionInfo.Path = []string{suite.GetTestFunctionsDir(), "common", "long-initialization", "python", "sleepy.py"}
 
 	default:
 		suite.Logger.InfoWith("Test skipped", "functionName", functionName)
@@ -81,5 +91,7 @@ func TestIntegrationSuite(t *testing.T) {
 		return
 	}
 
-	suite.Run(t, new(TestSuite))
+	suite.Run(t, newTestSuite("python"))
+	suite.Run(t, newTestSuite("python:2.7"))
+	suite.Run(t, newTestSuite("python:3.6"))
 }

@@ -23,12 +23,12 @@ import (
 	"github.com/nuclio/nuclio/pkg/processor/trigger"
 	"github.com/nuclio/nuclio/pkg/processor/worker"
 
-	"github.com/nuclio/nuclio-sdk"
+	"github.com/nuclio/logger"
 )
 
 type factory struct{}
 
-func (f *factory) Create(parentLogger nuclio.Logger,
+func (f *factory) Create(parentLogger logger.Logger,
 	ID string,
 	triggerConfiguration *functionconfig.Trigger,
 	runtimeConfiguration *runtime.Configuration) (trigger.Trigger, error) {
@@ -36,7 +36,7 @@ func (f *factory) Create(parentLogger nuclio.Logger,
 	// create logger parent
 	v3ioItemPollerLogger := parentLogger.GetChild("v3io_item_poller")
 
-	configuration, err := NewConfiguration(ID, triggerConfiguration)
+	configuration, err := NewConfiguration(ID, triggerConfiguration, runtimeConfiguration)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to create configuration")
 	}

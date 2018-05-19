@@ -55,15 +55,12 @@ func (suite *TestSuite) TestOutputs() {
 	}
 	testPath := "/path/to/nowhere"
 
-	deployOptions := suite.GetDeployOptions("outputter",
+	createFunctionOptions := suite.GetDeployOptions("outputter",
 		suite.GetFunctionPath("outputter"))
 
-	deployOptions.FunctionConfig.Spec.Handler = "outputter.js:testHandler"
+	createFunctionOptions.FunctionConfig.Spec.Handler = "outputter.js:testHandler"
 
-	suite.DeployFunction(deployOptions, func(deployResult *platform.DeployResult) bool {
-		err := suite.WaitForContainer(deployResult.Port)
-		suite.Require().NoError(err, "Can't reach container on port %d", deployResult.Port)
-
+	suite.DeployFunction(createFunctionOptions, func(deployResult *platform.CreateFunctionResult) bool {
 		testRequests := []httpsuite.Request{
 			{
 				Name:                       "return string",
@@ -88,7 +85,7 @@ func (suite *TestSuite) TestOutputs() {
 			},
 			{
 				Name:                       "return response",
-				RequestHeaders:             map[string]string{"a": "1", "b": "2"},
+				RequestHeaders:             map[string]interface{}{"a": "1", "b": "2"},
 				RequestBody:                "return_response",
 				ExpectedResponseHeaders:    headersFromResponse,
 				ExpectedResponseBody:       "response body",

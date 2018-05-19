@@ -18,80 +18,78 @@ package kube
 
 import (
 	"fmt"
-	"net/url"
-	"strings"
 	"sync"
 
 	"github.com/nuclio/nuclio/pkg/errors"
 	"github.com/nuclio/nuclio/pkg/functionconfig"
 	"github.com/nuclio/nuclio/pkg/platform"
-	"github.com/nuclio/nuclio/pkg/platform/kube/functioncr"
+	nuclioio "github.com/nuclio/nuclio/pkg/platform/kube/apis/nuclio.io/v1beta1"
 
-	"github.com/nuclio/nuclio-sdk"
+	"github.com/nuclio/logger"
 	"k8s.io/api/apps/v1beta1"
-	"k8s.io/api/core/v1"
 	ext_v1beta1 "k8s.io/api/extensions/v1beta1"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type function struct {
 	platform.AbstractFunction
-	functioncrInstance *functioncr.Function
+	function           *nuclioio.Function
 	consumer           *consumer
 	configuredReplicas int
 	availableReplicas  int
 	ingressAddress     string
+	httpPort           int
 }
 
-func newFunction(parentLogger nuclio.Logger,
+func newFunction(parentLogger logger.Logger,
 	parentPlatform platform.Platform,
-	config *functionconfig.Config,
-	functioncrInstance *functioncr.Function,
+	nuclioioFunction *nuclioio.Function,
 	consumer *consumer) (*function, error) {
-	newAbstractFunction, err := platform.NewAbstractFunction(parentLogger, parentPlatform, config)
+
+	newFunction := &function{}
+
+	// create a config from function
+	functionConfig := functionconfig.Config{
+		Meta: functionconfig.Meta{
+			Name:      nuclioioFunction.Name,
+			Namespace: nuclioioFunction.Namespace,
+			Labels:    nuclioioFunction.Labels,
+		},
+		Spec: nuclioioFunction.Spec,
+	}
+
+	newAbstractFunction, err := platform.NewAbstractFunction(parentLogger,
+		parentPlatform,
+		&functionConfig,
+		&nuclioioFunction.Status,
+		newFunction)
+
 	if err != nil {
 		return nil, err
 	}
 
-	newFunction := &function{
-		AbstractFunction:   *newAbstractFunction,
-		functioncrInstance: functioncrInstance,
-		consumer:           consumer,
-	}
+	newFunction.AbstractFunction = *newAbstractFunction
+	newFunction.function = nuclioioFunction
+	newFunction.consumer = consumer
 
 	return newFunction, nil
 }
 
 // Initialize loads sub-resources so we can populate our configuration
 func (f *function) Initialize([]string) error {
-	var service *v1.Service
 	var deployment *v1beta1.Deployment
 	var ingress *ext_v1beta1.Ingress
-	var serviceErr, deploymentErr, ingressErr error
+	var deploymentErr, ingressErr error
 
 	waitGroup := sync.WaitGroup{}
 
 	// wait for service, ingress and deployment
-	waitGroup.Add(3)
-
-	// get service info
-	go func() {
-		if service == nil {
-			service, serviceErr = f.consumer.clientset.CoreV1().
-				Services(f.Config.Meta.Namespace).
-				Get(f.Config.Meta.Name, meta_v1.GetOptions{})
-		}
-
-		// update HTTP port
-		f.Config.Spec.HTTPPort = int(service.Spec.Ports[0].NodePort)
-
-		waitGroup.Done()
-	}()
+	waitGroup.Add(2)
 
 	// get deployment info
 	go func() {
 		if deployment == nil {
-			deployment, deploymentErr = f.consumer.clientset.AppsV1beta1().
+			deployment, deploymentErr = f.consumer.kubeClientSet.AppsV1beta1().
 				Deployments(f.Config.Meta.Namespace).
 				Get(f.Config.Meta.Name, meta_v1.GetOptions{})
 		}
@@ -101,7 +99,7 @@ func (f *function) Initialize([]string) error {
 
 	go func() {
 		if ingress == nil {
-			ingress, ingressErr = f.consumer.clientset.ExtensionsV1beta1().
+			ingress, ingressErr = f.consumer.kubeClientSet.ExtensionsV1beta1().
 				Ingresses(f.Config.Meta.Namespace).
 				Get(f.Config.Meta.Name, meta_v1.GetOptions{})
 		}
@@ -114,7 +112,7 @@ func (f *function) Initialize([]string) error {
 
 	// return the first error
 	for _, err := range []error{
-		serviceErr, deploymentErr, ingressErr,
+		deploymentErr,
 	} {
 		if err != nil {
 			return err
@@ -122,22 +120,16 @@ func (f *function) Initialize([]string) error {
 	}
 
 	// update fields
-	f.Config.Spec.HTTPPort = int(service.Spec.Ports[0].NodePort)
 	f.availableReplicas = int(deployment.Status.AvailableReplicas)
 	if deployment.Spec.Replicas != nil {
 		f.configuredReplicas = int(*deployment.Spec.Replicas)
 	}
 
-	if len(ingress.Status.LoadBalancer.Ingress) > 0 {
+	if ingressErr != nil && ingress != nil && len(ingress.Status.LoadBalancer.Ingress) > 0 {
 		f.ingressAddress = ingress.Status.LoadBalancer.Ingress[0].IP
 	}
 
 	return nil
-}
-
-// GetState returns the state of the function
-func (f *function) GetState() string {
-	return string(f.functioncrInstance.Status.State)
 }
 
 // GetInvokeURL returns the URL on which the function can be invoked
@@ -158,12 +150,12 @@ func (f *function) GetReplicas() (int, int) {
 func (f *function) GetConfig() *functionconfig.Config {
 	return &functionconfig.Config{
 		Meta: functionconfig.Meta{
-			Name:        f.functioncrInstance.Name,
-			Namespace:   f.functioncrInstance.Namespace,
-			Labels:      f.functioncrInstance.Labels,
-			Annotations: f.functioncrInstance.Annotations,
+			Name:        f.function.Name,
+			Namespace:   f.function.Namespace,
+			Labels:      f.function.Labels,
+			Annotations: f.function.Annotations,
 		},
-		Spec: f.functioncrInstance.Spec,
+		Spec: f.function.Spec,
 	}
 }
 
@@ -180,6 +172,8 @@ func (f *function) getInvokeURLFields(invokeViaType platform.InvokeViaType) (str
 			host, port, path = f.getIngressInvokeURL()
 		case platform.InvokeViaExternalIP:
 			host, port, path = f.getExternalIPInvokeURL()
+		case platform.InvokeViaDomainName:
+			host, port, path = f.getDomainNameInvokeURL()
 		}
 
 		// if host is empty and we were configured to a specific via type, return an error
@@ -221,31 +215,22 @@ func (f *function) getIngressInvokeURL() (string, int, string) {
 }
 
 func (f *function) getExternalIPInvokeURL() (string, int, string) {
-	nodes, err := f.Platform.GetNodes()
+	host, port, err := f.GetExternalIPInvocationURL()
 	if err != nil {
 		return "", 0, ""
 	}
 
-	// try to get an external IP address from one of the nodes. if that doesn't work,
-	// try to get an internal IP
-	for _, addressType := range []platform.AddressType{
-		platform.AddressTypeExternalIP,
-		platform.AddressTypeInternalIP} {
+	// return it and the port
+	return host, port, ""
+}
 
-		for _, node := range nodes {
-			for _, address := range node.GetAddresses() {
-				if address.Type == addressType {
-					return address.Address, f.Config.Spec.HTTPPort, ""
-				}
-			}
-		}
+func (f *function) getDomainNameInvokeURL() (string, int, string) {
+	namespace := f.function.ObjectMeta.Namespace
+	if namespace == "" {
+		namespace = "nuclio"
 	}
 
-	// try to take from kube host as configured
-	kubeURL, err := url.Parse(f.consumer.kubeHost)
-	if err == nil && kubeURL.Host != "" {
-		return strings.Split(kubeURL.Host, ":")[0], f.Config.Spec.HTTPPort, ""
-	}
+	domainName := fmt.Sprintf("%s.%s.svc.cluster.local", f.function.ObjectMeta.Name, namespace)
 
-	return "", 0, ""
+	return domainName, 8080, ""
 }

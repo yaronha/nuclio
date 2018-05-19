@@ -19,23 +19,28 @@ package trigger
 import (
 	"fmt"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/nuclio/nuclio/pkg/errors"
+	"github.com/nuclio/nuclio/pkg/functionconfig"
 	"github.com/nuclio/nuclio/pkg/processor/worker"
 
-	nuclio "github.com/nuclio/nuclio-sdk"
+	"github.com/nuclio/logger"
+	"github.com/nuclio/nuclio-sdk-go"
+	"github.com/satori/go.uuid"
 )
-
-type Checkpoint *string
 
 type Trigger interface {
 
+	// Initialize performs post creation initializations
+	Initialize() error
+
 	// start creating events from a given checkpoint (nil - no checkpoint)
-	Start(checkpoint Checkpoint) error
+	Start(checkpoint functionconfig.Checkpoint) error
 
 	// stop creating events. returns the current checkpoint
-	Stop(force bool) (Checkpoint, error)
+	Stop(force bool) (functionconfig.Checkpoint, error)
 
 	// get the user given ID for this trigger
 	GetID() string
@@ -57,25 +62,34 @@ type Trigger interface {
 	GetWorkers() []*worker.Worker
 }
 
+// AbstractTrigger implements common trigger operations
 type AbstractTrigger struct {
 	ID              string
-	Logger          nuclio.Logger
+	Logger          logger.Logger
 	WorkerAllocator worker.Allocator
 	Class           string
 	Kind            string
 	Statistics      Statistics
 }
 
+// Initialize performs post creation initializations
+func (at *AbstractTrigger) Initialize() error {
+	return nil
+}
+
+// GetClass returns the class
 func (at *AbstractTrigger) GetClass() string {
 	return at.Class
 }
 
+// GetKind return the kind
 func (at *AbstractTrigger) GetKind() string {
 	return at.Kind
 }
 
+// AllocateWorkerAndSubmitEvent submits event to allocated worker
 func (at *AbstractTrigger) AllocateWorkerAndSubmitEvent(event nuclio.Event,
-	functionLogger nuclio.Logger,
+	functionLogger logger.Logger,
 	timeout time.Duration) (response interface{}, submitError error, processError error) {
 
 	var workerInstance *worker.Worker
@@ -98,8 +112,9 @@ func (at *AbstractTrigger) AllocateWorkerAndSubmitEvent(event nuclio.Event,
 	return
 }
 
+// AllocateWorkerAndSubmitEvents submits multiple events to an allocated worker
 func (at *AbstractTrigger) AllocateWorkerAndSubmitEvents(events []nuclio.Event,
-	functionLogger nuclio.Logger,
+	functionLogger logger.Logger,
 	timeout time.Duration) (responses []interface{}, submitError error, processErrors []error) {
 
 	var workerInstance *worker.Worker
@@ -134,20 +149,22 @@ func (at *AbstractTrigger) AllocateWorkerAndSubmitEvents(events []nuclio.Event,
 	return eventResponses, nil, eventErrors
 }
 
+// GetWorkers returns the list of workers
 func (at *AbstractTrigger) GetWorkers() []*worker.Worker {
 	return at.WorkerAllocator.GetWorkers()
 }
 
-// get statistics
+// GetStatistics returns trigger statistics
 func (at *AbstractTrigger) GetStatistics() *Statistics {
 	return &at.Statistics
 }
 
-// get user given ID for this trigger
+// GetID returns user given ID for this trigger
 func (at *AbstractTrigger) GetID() string {
 	return at.ID
 }
 
+// HandleSubmitPanic handles a panic when submitting to worker
 func (at *AbstractTrigger) HandleSubmitPanic(workerInstance *worker.Worker,
 	submitError *error) {
 
@@ -170,12 +187,15 @@ func (at *AbstractTrigger) HandleSubmitPanic(workerInstance *worker.Worker,
 	}
 }
 
-func (at *AbstractTrigger) SubmitEventToWorker(functionLogger nuclio.Logger,
+// SubmitEventToWorker submits events to worker and returns response
+func (at *AbstractTrigger) SubmitEventToWorker(functionLogger logger.Logger,
 	workerInstance *worker.Worker,
 	event nuclio.Event) (response interface{}, processError error) {
 
-	// set trigger info provider (ourselves)
-	event.SetSourceProvider(at)
+	event, err := at.prepareEvent(event, workerInstance)
+	if err != nil {
+		return nil, err
+	}
 
 	response, processError = workerInstance.ProcessEvent(event, functionLogger)
 
@@ -184,10 +204,50 @@ func (at *AbstractTrigger) SubmitEventToWorker(functionLogger nuclio.Logger,
 	return
 }
 
+// UpdateStatistics updates the trigger statistics
 func (at *AbstractTrigger) UpdateStatistics(success bool) {
 	if success {
 		at.Statistics.EventsHandleSuccessTotal++
 	} else {
 		at.Statistics.EventsHandleFailureTotal++
 	}
+}
+
+func (at *AbstractTrigger) prepareEvent(event nuclio.Event, workerInstance *worker.Worker) (nuclio.Event, error) {
+	// if the content type starts with application/cloudevents, the body
+	// contains a structured cloud event (a JSON encoded structure)
+	// https://github.com/cloudevents/spec/blob/master/json-format.md
+	if strings.HasPrefix(event.GetContentType(), "application/cloudevents") {
+
+		// use the structured cloudevent stored in the worker to wrap this existing event
+		structuredCloudEvent := workerInstance.GetStructuredCloudEvent()
+
+		// wrap the received event
+		if err := structuredCloudEvent.SetEvent(event); err != nil {
+			return nil, errors.Wrap(err, "Failed to wrap structured cloud event")
+		}
+
+		return structuredCloudEvent, nil
+	}
+
+	// if body does not encode a structured cloudevent, check if this is a
+	// binary cloud event by checking the existence of the
+	// "CE-CloudEventsVersion" header
+	if event.GetHeaderString("CE-CloudEventsVersion") != "" {
+
+		// use the structured cloudevent stored in the worker to wrap this existing event
+		binaryCloudEvent := workerInstance.GetBinaryCloudEvent()
+
+		// wrap the received event
+		if err := binaryCloudEvent.SetEvent(event); err != nil {
+			return nil, errors.Wrap(err, "Failed to wrap binary cloud event")
+		}
+
+		return binaryCloudEvent, nil
+	}
+
+	// Not a cloud event
+	event.SetID(nuclio.ID(uuid.NewV4().String()))
+	event.SetTriggerInfoProvider(at)
+	return event, nil
 }

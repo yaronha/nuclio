@@ -18,19 +18,21 @@ package util
 
 import (
 	"fmt"
+	"path"
 	"reflect"
+	"strings"
 
 	"github.com/nuclio/nuclio/pkg/errors"
 
 	"github.com/mholt/archiver"
-	"github.com/nuclio/nuclio-sdk"
+	"github.com/nuclio/logger"
 )
 
 type Decompressor struct {
-	logger nuclio.Logger
+	logger logger.Logger
 }
 
-func NewDecompressor(parentLogger nuclio.Logger) (*Decompressor, error) {
+func NewDecompressor(parentLogger logger.Logger) (*Decompressor, error) {
 	newDecompressor := &Decompressor{
 		logger: parentLogger,
 	}
@@ -57,6 +59,11 @@ func (d *Decompressor) Decompress(source string, target string) error {
 }
 
 func IsCompressed(source string) bool {
+	// Jars are special case
+	if strings.ToLower(path.Ext(source)) == ".jar" {
+		return false
+	}
+
 	fileArchiver := archiver.MatchingFormat(source)
 	return fileArchiver != nil
 }

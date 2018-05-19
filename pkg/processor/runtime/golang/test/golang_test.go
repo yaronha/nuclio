@@ -17,18 +17,23 @@ limitations under the License.
 package test
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"path"
 	"testing"
 
 	"github.com/nuclio/nuclio/pkg/platform"
+	"github.com/nuclio/nuclio/pkg/processor/test/cloudevents"
 	"github.com/nuclio/nuclio/pkg/processor/trigger/http/test/suite"
 
+	"github.com/satori/go.uuid"
 	"github.com/stretchr/testify/suite"
 )
 
 type TestSuite struct {
 	httpsuite.TestSuite
+	cloudevents.CloudEventsTestSuite
 }
 
 func (suite *TestSuite) SetupTest() {
@@ -36,6 +41,7 @@ func (suite *TestSuite) SetupTest() {
 
 	suite.Runtime = "golang"
 	suite.FunctionDir = path.Join(suite.GetNuclioSourceDir(), "pkg", "processor", "runtime", "golang", "test")
+	suite.CloudEventsTestSuite.HTTPSuite = &suite.TestSuite
 }
 
 func (suite *TestSuite) TestOutputs() {
@@ -50,13 +56,12 @@ func (suite *TestSuite) TestOutputs() {
 	testPath := "/path/to/nowhere"
 
 	headersContentTypeTextPlain := map[string]string{"content-type": "text/plain; charset=utf-8"}
-	// headersContentTypeApplicationJSON := map[string]string{"content-type": "application/json"}
 
-	deployOptions := suite.GetDeployOptions("outputter",
+	// headersContentTypeApplicationJSON := map[string]string{"content-type": "application/json"}
+	createFunctionOptions := suite.GetDeployOptions("outputter",
 		suite.GetFunctionPath("_outputter"))
 
-	suite.DeployFunction(deployOptions, func(deployResult *platform.DeployResult) bool {
-
+	suite.DeployFunction(createFunctionOptions, func(deployResult *platform.CreateFunctionResult) bool {
 		testRequests := []httpsuite.Request{
 			{
 				Name:                       "string",
@@ -79,7 +84,7 @@ func (suite *TestSuite) TestOutputs() {
 			},
 			{
 				Name:           "response object",
-				RequestHeaders: map[string]string{"a": "1", "b": "2"},
+				RequestHeaders: map[string]interface{}{"a": "1", "b": "2"},
 				RequestBody:    "return_response",
 				ExpectedResponseHeaders: map[string]string{
 					"a":            "1",
@@ -162,6 +167,70 @@ func (suite *TestSuite) TestOutputs() {
 
 		return true
 	})
+}
+
+func (suite *TestSuite) TestCustomEvent() {
+	createFunctionOptions := suite.GetDeployOptions("event-returner",
+		path.Join(suite.GetTestFunctionsDir(), "common", "event-returner", "golang"))
+
+	requestMethod := "POST"
+	requestPath := "/testPath"
+	requestHeaders := map[string]interface{}{
+		"Testheaderkey1": "testHeaderValue1",
+		"Testheaderkey2": "testHeaderValue2",
+	}
+
+	suite.DeployFunction(createFunctionOptions, func(deployResult *platform.CreateFunctionResult) bool {
+		bodyVerifier := func(body []byte) {
+			unmarshalledBody := httpsuite.EventFields{}
+
+			// read the body JSON
+			err := json.Unmarshal(body, &unmarshalledBody)
+			suite.Require().NoError(err, "Can't decode JSON response")
+
+			decodedBody, err := base64.StdEncoding.DecodeString(unmarshalledBody.Body)
+			suite.Require().NoError(err, "Can't decode body as base64")
+
+			suite.Require().Equal("testBody", string(decodedBody))
+			suite.Require().Equal(requestPath, unmarshalledBody.Path)
+			suite.Require().Equal(requestMethod, unmarshalledBody.Method)
+			suite.Require().Equal("http", unmarshalledBody.TriggerKind)
+
+			// compare known headers
+			for requestHeaderKey, requestHeaderValue := range requestHeaders {
+				suite.Require().Equal(requestHeaderValue, unmarshalledBody.Headers[requestHeaderKey])
+			}
+
+			// ID must be a UUID
+			_, err = uuid.FromString(string(unmarshalledBody.ID))
+			suite.Require().NoError(err)
+		}
+
+		testRequest := httpsuite.Request{
+			RequestBody:          "testBody",
+			RequestHeaders:       requestHeaders,
+			RequestPort:          deployResult.Port,
+			RequestMethod:        requestMethod,
+			RequestPath:          requestPath,
+			ExpectedResponseBody: bodyVerifier,
+		}
+
+		if !suite.SendRequestVerifyResponse(&testRequest) {
+			return false
+		}
+
+		return true
+	})
+}
+
+func (suite *TestSuite) TestStress() {
+
+	// Create blastConfiguration using default configurations + changes for golang specification
+	blastConfiguration := suite.NewBlastConfiguration()
+	blastConfiguration.FunctionPath = "_outputter"
+
+	// Create stress test using suite.BlastHTTP
+	suite.BlastHTTP(blastConfiguration)
 }
 
 func TestIntegrationSuite(t *testing.T) {

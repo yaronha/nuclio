@@ -27,33 +27,33 @@ import (
 	"github.com/nuclio/nuclio/pkg/processor/runtime"
 	"github.com/nuclio/nuclio/pkg/processor/runtime/rpc"
 
-	"github.com/nuclio/nuclio-sdk"
+	"github.com/nuclio/logger"
 )
 
 type python struct {
 	*rpc.Runtime
-	Logger        nuclio.Logger
+	Logger        logger.Logger
 	configuration *runtime.Configuration
 }
 
 // NewRuntime returns a new Python runtime
-func NewRuntime(parentLogger nuclio.Logger, configuration *runtime.Configuration) (runtime.Runtime, error) {
+func NewRuntime(parentLogger logger.Logger, configuration *runtime.Configuration) (runtime.Runtime, error) {
 	newPythonRuntime := &python{
 		configuration: configuration,
 		Logger:        parentLogger.GetChild("logger"),
 	}
 
 	var err error
-	newPythonRuntime.Runtime, err = rpc.NewRPCRuntime(newPythonRuntime.Logger, configuration, newPythonRuntime.runWrapper)
+	newPythonRuntime.Runtime, err = rpc.NewRPCRuntime(newPythonRuntime.Logger, configuration, newPythonRuntime.runWrapper, rpc.UnixSocket)
 
 	return newPythonRuntime, err
 }
 
-func (py *python) runWrapper(socketPath string) error {
+func (py *python) runWrapper(socketPath string) (*os.Process, error) {
 	wrapperScriptPath := py.getWrapperScriptPath()
 	py.Logger.DebugWith("Using Python wrapper script path", "path", wrapperScriptPath)
 	if !common.IsFile(wrapperScriptPath) {
-		return fmt.Errorf("Can't find wrapper at %q", wrapperScriptPath)
+		return nil, fmt.Errorf("Can't find wrapper at %q", wrapperScriptPath)
 	}
 
 	handler := py.getHandler()
@@ -62,7 +62,7 @@ func (py *python) runWrapper(socketPath string) error {
 	pythonExePath, err := py.getPythonExePath()
 	if err != nil {
 		py.Logger.ErrorWith("Can't find Python exe", "error", err)
-		return err
+		return nil, err
 	}
 	py.Logger.DebugWith("Using Python executable", "path", pythonExePath)
 
@@ -74,9 +74,11 @@ func (py *python) runWrapper(socketPath string) error {
 	env = append(env, envPath)
 
 	args := []string{
-		pythonExePath, wrapperScriptPath,
+		pythonExePath, "-u", wrapperScriptPath,
 		"--handler", handler,
 		"--socket-path", socketPath,
+		"--platform-kind", py.configuration.PlatformConfig.Kind,
+		"--namespace", py.configuration.Meta.Namespace,
 	}
 
 	py.Logger.DebugWith("Running wrapper", "command", strings.Join(args, " "))
@@ -86,7 +88,7 @@ func (py *python) runWrapper(socketPath string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stdout
 
-	return cmd.Start()
+	return cmd.Process, cmd.Start()
 }
 
 func (py *python) getEnvFromConfiguration() []string {

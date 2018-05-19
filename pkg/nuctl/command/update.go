@@ -93,10 +93,10 @@ func newUpdateFunctionCommandeer(updateCommandeer *updateCommandeer) *updateFunc
 			}
 
 			// decode labels
-			commandeer.functionConfig.Meta.Labels = common.StringToStringMap(commandeer.encodedLabels)
+			commandeer.functionConfig.Meta.Labels = common.StringToStringMap(commandeer.encodedLabels, "=")
 
 			// decode env
-			for envName, envValue := range common.StringToStringMap(commandeer.encodedEnv) {
+			for envName, envValue := range common.StringToStringMap(commandeer.encodedEnv, "=") {
 				commandeer.functionConfig.Spec.Env = append(commandeer.functionConfig.Spec.Env, v1.EnvVar{
 					Name:  envName,
 					Value: envValue,
@@ -112,8 +112,9 @@ func newUpdateFunctionCommandeer(updateCommandeer *updateCommandeer) *updateFunc
 				return errors.Wrap(err, "Failed to initialize root")
 			}
 
-			return updateCommandeer.rootCommandeer.platform.UpdateFunction(&platform.UpdateOptions{
-				FunctionConfig: commandeer.functionConfig,
+			return updateCommandeer.rootCommandeer.platform.UpdateFunction(&platform.UpdateFunctionOptions{
+				FunctionMeta: &commandeer.functionConfig.Meta,
+				FunctionSpec: &commandeer.functionConfig.Spec,
 			})
 		},
 	}

@@ -55,12 +55,10 @@ struct API {
   char *(*set_handler)(char *handler);
 
   // Event interface
-  long int (*eventVersion)(void *ptr);
   char *(*eventID)(void *ptr);
   char *(*eventTriggerClass)(void *ptr);
   char *(*eventTriggerKind)(void *ptr);
   char *(*eventContentType)(void *ptr);
-  //char *(*eventBody)(void *ptr);
   bytes_t (*eventBody)(void *ptr);
   long int (*eventSize)(void *ptr);
   char *(*eventHeaders)(void *ptr);
@@ -69,6 +67,9 @@ struct API {
   char *(*eventPath)(void *ptr);
   char *(*eventURL)(void *ptr);
   char *(*eventMethod)(void *ptr);
+  char *(*eventType)(void *ptr);
+  char *(*eventTypeVersion)(void *ptr);
+  char *(*eventVersion)(void *ptr);
 
   void (*contextLog)(void *, int, char *);
   void (*contextLogWith)(void *, int, char *, char *);
@@ -162,10 +163,6 @@ class Event(object):
             return {}
 
     @property
-    def version(self):
-        return api.eventVersion(self._ptr)
-
-    @property
     def id(self):
         return as_string(api.eventID(self._ptr))
 
@@ -185,7 +182,6 @@ class Event(object):
     def body(self):
         body = api.eventBody(self._ptr)
         return ffi.unpack(body.data, body.size)
-        # return ffi.string(api.eventBody(self._ptr))
 
     @property
     def size(self):
@@ -207,6 +203,18 @@ class Event(object):
     @property
     def method(self):
         return as_string(api.eventMethod(self._ptr))
+
+    @property
+    def type(self):
+        return as_string(api.eventType(self._ptr))
+
+    @property
+    def type_version(self):
+        return as_string(api.eventTypeVersion(self._ptr))
+
+    @property
+    def version(self):
+        return as_string(api.eventVersion(self._ptr))
 
     @classmethod
     def instance(cls, ptr, context):

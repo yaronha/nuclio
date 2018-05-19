@@ -32,9 +32,10 @@ import (
 	"unsafe"
 
 	"github.com/nuclio/nuclio/pkg/common"
-	"github.com/nuclio/nuclio/pkg/zap"
 
-	"github.com/nuclio/nuclio-sdk"
+	"github.com/nuclio/logger"
+	"github.com/nuclio/nuclio-sdk-go"
+	"github.com/nuclio/zap"
 )
 
 // TODO: Must be in sync with the enum in interface.h
@@ -47,13 +48,13 @@ const (
 )
 
 var (
-	logger nuclio.Logger
+	loggerInstance logger.Logger
 )
 
 func logError(message string, args ...interface{}) {
-	if logger == nil {
+	if loggerInstance == nil {
 		var err error
-		logger, err = nucliozap.NewNuclioZapCmd("pypy", nucliozap.ErrorLevel)
+		loggerInstance, err = nucliozap.NewNuclioZapCmd("pypy", nucliozap.ErrorLevel)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: Can't create logger - %s\n", err)
 			fmt.Fprintf(os.Stderr, "\tMESSAGE: %s\n", message)
@@ -62,15 +63,7 @@ func logError(message string, args ...interface{}) {
 		}
 	}
 
-	logger.ErrorWith(message, args)
-}
-
-// nolint
-//export eventVersion
-func eventVersion(ptr unsafe.Pointer) C.longlong {
-	event := *(*nuclio.Event)(ptr)
-
-	return C.longlong(event.GetVersion())
+	loggerInstance.ErrorWith(message, args)
 }
 
 // nolint
@@ -78,14 +71,15 @@ func eventVersion(ptr unsafe.Pointer) C.longlong {
 func eventID(ptr unsafe.Pointer) *C.char {
 	event := *(*nuclio.Event)(ptr)
 
-	return C.CString(event.GetID().String())
+	return C.CString(string(event.GetID()))
 }
 
+// TODO: Remove from API?
 // nolint
 //export eventSize
 func eventSize(ptr unsafe.Pointer) C.longlong {
 	event := *(*nuclio.Event)(ptr)
-	return C.longlong(event.GetSize())
+	return C.longlong(len(event.GetBody()))
 }
 
 // nolint
@@ -93,7 +87,7 @@ func eventSize(ptr unsafe.Pointer) C.longlong {
 func eventTriggerClass(ptr unsafe.Pointer) *C.char {
 	event := *(*nuclio.Event)(ptr)
 
-	return C.CString(event.GetSource().GetClass())
+	return C.CString(event.GetTriggerInfo().GetClass())
 }
 
 // nolint
@@ -101,7 +95,7 @@ func eventTriggerClass(ptr unsafe.Pointer) *C.char {
 func eventTriggerKind(ptr unsafe.Pointer) *C.char {
 	event := *(*nuclio.Event)(ptr)
 
-	return C.CString(event.GetSource().GetKind())
+	return C.CString(event.GetTriggerInfo().GetKind())
 }
 
 // nolint
@@ -192,6 +186,30 @@ func eventMethod(ptr unsafe.Pointer) *C.char {
 	event := *(*nuclio.Event)(ptr)
 
 	return C.CString(event.GetMethod())
+}
+
+// nolint
+//export eventType
+func eventType(ptr unsafe.Pointer) *C.char {
+	event := *(*nuclio.Event)(ptr)
+
+	return C.CString(event.GetType())
+}
+
+// nolint
+//export eventTypeVersion
+func eventTypeVersion(ptr unsafe.Pointer) *C.char {
+	event := *(*nuclio.Event)(ptr)
+
+	return C.CString(event.GetTypeVersion())
+}
+
+// nolint
+//export eventVersion
+func eventVersion(ptr unsafe.Pointer) *C.char {
+	event := *(*nuclio.Event)(ptr)
+
+	return C.CString(event.GetVersion())
 }
 
 // nolint

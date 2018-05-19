@@ -29,25 +29,42 @@ type LogInOptions struct {
 
 // BuildOptions are options for building a docker image
 type BuildOptions struct {
-	ImageName      string
+	Image          string
 	ContextDir     string
 	DockerfilePath string
 	NoCache        bool
+	BuildArgs      map[string]string
 }
 
 // RunOptions are options for running a docker image
 type RunOptions struct {
-	Ports         map[int]int
-	ContainerName string
-	NetworkType   string
-	Env           map[string]string
-	Labels        map[string]string
-	Volumes       map[string]string
+	Ports            map[int]int
+	ContainerName    string
+	Env              map[string]string
+	Labels           map[string]string
+	Volumes          map[string]string
+	Remove           bool
+	Command          string
+	Stdout           *string
+	Stderr           *string
+	Attach           bool
+	ImageMayNotExist bool
+	Network          string
+}
+
+// ExecOptions are options for executing a command in a container
+type ExecOptions struct {
+	Command string
+	Stdout  *string
+	Stderr  *string
+	Env     map[string]string
 }
 
 // GetContainerOptions are options for container search
 type GetContainerOptions struct {
-	Labels map[string]string
+	Name    string
+	Labels  map[string]string
+	Stopped bool
 }
 
 // ContainerJSONBase contains response of Engine API:
@@ -288,4 +305,9 @@ type EndpointSettings struct {
 type Address struct {
 	Addr      string
 	PrefixLen int
+}
+
+// CreateNetworkOptions are options for creating a network
+type CreateNetworkOptions struct {
+	Name string
 }

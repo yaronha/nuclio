@@ -18,29 +18,24 @@ package abstract
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
-	"strings"
 
-	"github.com/nuclio/nuclio/pkg/common"
 	"github.com/nuclio/nuclio/pkg/errors"
 	"github.com/nuclio/nuclio/pkg/platform"
-	"github.com/nuclio/nuclio/pkg/zap"
 
-	"github.com/mgutz/ansi"
-	"github.com/nuclio/nuclio-sdk"
+	"github.com/nuclio/logger"
 )
 
 type invoker struct {
-	logger        nuclio.Logger
-	platform      platform.Platform
-	invokeOptions *platform.InvokeOptions
+	logger                          logger.Logger
+	platform                        platform.Platform
+	createFunctionInvocationOptions *platform.CreateFunctionInvocationOptions
 }
 
-func newInvoker(parentLogger nuclio.Logger, platform platform.Platform) (*invoker, error) {
+func newInvoker(parentLogger logger.Logger, platform platform.Platform) (*invoker, error) {
 	newinvoker := &invoker{
 		logger:   parentLogger.GetChild("invoker"),
 		platform: platform,
@@ -49,19 +44,23 @@ func newInvoker(parentLogger nuclio.Logger, platform platform.Platform) (*invoke
 	return newinvoker, nil
 }
 
-func (i *invoker) invoke(invokeOptions *platform.InvokeOptions, writer io.Writer) error {
+func (i *invoker) invoke(createFunctionInvocationOptions *platform.CreateFunctionInvocationOptions) (*platform.CreateFunctionInvocationResult, error) {
 
 	// save options
-	i.invokeOptions = invokeOptions
+	i.createFunctionInvocationOptions = createFunctionInvocationOptions
 
 	// get the function by name
-	functions, err := i.platform.GetFunctions(&platform.GetOptions{
-		Name:      invokeOptions.Name,
-		Namespace: invokeOptions.Namespace,
+	functions, err := i.platform.GetFunctions(&platform.GetFunctionsOptions{
+		Name:      createFunctionInvocationOptions.Name,
+		Namespace: createFunctionInvocationOptions.Namespace,
 	})
 
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to get functions")
+	}
+
 	if len(functions) == 0 {
-		return errors.Wrap(err, "Function not found")
+		return nil, fmt.Errorf("Function not found: %s @ %s", createFunctionInvocationOptions.Name, createFunctionInvocationOptions.Namespace)
 	}
 
 	// use the first function found (should always be one, but if there's more just use first)
@@ -69,18 +68,18 @@ func (i *invoker) invoke(invokeOptions *platform.InvokeOptions, writer io.Writer
 
 	// make sure to initialize the function (some underlying functions are lazy load)
 	if err = function.Initialize(nil); err != nil {
-		return errors.Wrap(err, "Failed to initialize function")
+		return nil, errors.Wrap(err, "Failed to initialize function")
 	}
 
 	// get where the function resides
-	invokeURL, err := function.GetInvokeURL(invokeOptions.Via)
+	invokeURL, err := function.GetInvokeURL(createFunctionInvocationOptions.Via)
 	if err != nil {
-		return errors.Wrap(err, "Failed to get invoke URL")
+		return nil, errors.Wrap(err, "Failed to get invoke URL")
 	}
 
 	fullpath := "http://" + invokeURL
-	if invokeOptions.Path != "" {
-		fullpath += "/" + invokeOptions.Path
+	if createFunctionInvocationOptions.Path != "" {
+		fullpath += "/" + createFunctionInvocationOptions.Path
 	}
 
 	client := &http.Client{}
@@ -88,180 +87,48 @@ func (i *invoker) invoke(invokeOptions *platform.InvokeOptions, writer io.Writer
 	var body io.Reader = http.NoBody
 
 	// set body for post
-	if invokeOptions.Method == "POST" {
-		body = bytes.NewBuffer([]byte(invokeOptions.Body))
+	if createFunctionInvocationOptions.Method != "GET" {
+		body = bytes.NewBuffer(createFunctionInvocationOptions.Body)
 	}
 
 	i.logger.InfoWith("Executing function",
-		"method", invokeOptions.Method,
+		"method", createFunctionInvocationOptions.Method,
 		"url", fullpath,
 		"body", body,
 	)
 
 	// issue the request
-	req, err = http.NewRequest(invokeOptions.Method, fullpath, body)
+	req, err = http.NewRequest(createFunctionInvocationOptions.Method, fullpath, body)
 	if err != nil {
-		return errors.Wrap(err, "Failed to create HTTP request")
+		return nil, errors.Wrap(err, "Failed to create HTTP request")
 	}
 
-	req.Header.Set("Content-Type", invokeOptions.ContentType)
+	// set headers
+	req.Header = createFunctionInvocationOptions.Headers
 
 	// request logs from a given verbosity unless we're specified no logs should be returned
-	if invokeOptions.LogLevelName != "none" {
-		req.Header.Set("X-nuclio-log-level", invokeOptions.LogLevelName)
-	}
-
-	headers := common.StringToStringMap(invokeOptions.Headers)
-	for k, v := range headers {
-		req.Header.Set(k, v)
+	if createFunctionInvocationOptions.LogLevelName != "none" {
+		req.Header.Set("x-nuclio-log-level", createFunctionInvocationOptions.LogLevelName)
 	}
 
 	response, err := client.Do(req)
 	if err != nil {
-		return errors.Wrap(err, "Failed to send HTTP request")
+		return nil, errors.Wrap(err, "Failed to send HTTP request")
 	}
 
-	defer response.Body.Close()
+	defer response.Body.Close() // nolint: errcheck
 
 	i.logger.InfoWith("Got response", "status", response.Status)
 
-	// try to output the logs (ignore errors)
-	if invokeOptions.LogLevelName != "none" {
-		i.outputFunctionLogs(response, writer)
-	}
-
-	// output the headers
-	i.outputResponseHeaders(response, writer)
-
-	// output the boy
-	i.outputResponseBody(response, writer)
-
-	return nil
-}
-
-func (i *invoker) outputFunctionLogs(response *http.Response, writer io.Writer) error {
-
-	// the function logs should return as JSON
-	functionLogs := []map[string]interface{}{}
-
-	// wrap the contents in [] so that it appears as a JSON array
-	encodedFunctionLogs := response.Header.Get("X-nuclio-logs")
-
-	// parse the JSON into function logs
-	err := json.Unmarshal([]byte(encodedFunctionLogs), &functionLogs)
-	if err != nil {
-		return errors.Wrap(err, "Failed to parse logs")
-	}
-
-	// if there are no logs, return now
-	if len(functionLogs) == 0 {
-		return nil
-	}
-
-	// create a logger whose name is that of the function and whose severity was chosen by command line
-	// arguments during invocation
-	functionLogger, err := nucliozap.NewNuclioZap(i.invokeOptions.Name,
-		"console",
-		writer,
-		writer,
-		nucliozap.DebugLevel)
-
-	if err != nil {
-		return errors.Wrap(err, "Failed to create function logger")
-	}
-
-	i.logger.Info(">>> Start of function logs")
-
-	// iterate through all the logs
-	for _, functionLog := range functionLogs {
-		message := functionLog["message"].(string)
-		levelName := functionLog["level"].(string)
-		delete(functionLog, "message")
-		delete(functionLog, "level")
-		delete(functionLog, "name")
-
-		// convert args map to a slice of interfaces
-		args := i.stringInterfaceMapToInterfaceSlice(functionLog)
-
-		// output to log by level
-		i.getOutputByLevelName(functionLogger, levelName)(message, args...)
-	}
-
-	if len(functionLogs) != 0 {
-		i.logger.Info("<<< End of function logs")
-	}
-
-	return nil
-}
-
-func (i *invoker) stringInterfaceMapToInterfaceSlice(input map[string]interface{}) []interface{} {
-	output := []interface{}{}
-
-	// convert the map to a flat slice of interfaces
-	for argName, argValue := range input {
-		output = append(output, argName)
-		output = append(output, argValue)
-	}
-
-	return output
-}
-
-func (i *invoker) getOutputByLevelName(logger nuclio.Logger, levelName string) func(interface{}, ...interface{}) {
-	switch levelName {
-	case "info":
-		return i.logger.InfoWith
-	case "warn":
-		return i.logger.WarnWith
-	case "error":
-		return i.logger.ErrorWith
-	default:
-		return i.logger.DebugWith
-	}
-}
-
-func (i *invoker) outputResponseHeaders(response *http.Response, writer io.Writer) error {
-	fmt.Fprintf(writer, "\n%s\n", ansi.Color("> Response headers:", "blue+h"))
-
-	for headerName, headerValue := range response.Header {
-
-		// skip the log headers
-		if strings.ToLower(headerName) == strings.ToLower("X-Nuclio-Logs") {
-			continue
-		}
-
-		fmt.Fprintf(writer, "%s = %s\n", headerName, headerValue[0])
-	}
-
-	return nil
-}
-
-func (i *invoker) outputResponseBody(response *http.Response, writer io.Writer) error {
-	var responseBodyString string
-
+	// read the body
 	responseBody, err := ioutil.ReadAll(response.Body)
 	if err != nil {
-		return err
+		return nil, errors.Wrap(err, "Failed to read response body")
 	}
 
-	// Print raw body
-	fmt.Fprintf(writer, "\n%s\n", ansi.Color("> Response body:", "blue+h"))
-
-	// check if response is json
-	if response.Header.Get("Content-Type") == "application/json" {
-		var indentedBody bytes.Buffer
-
-		err = json.Indent(&indentedBody, responseBody, "", "    ")
-		if err != nil {
-			responseBodyString = string(responseBody)
-		} else {
-			responseBodyString = indentedBody.String()
-		}
-
-	} else {
-		responseBodyString = string(responseBody)
-	}
-
-	fmt.Fprintln(writer, responseBodyString)
-
-	return nil
+	return &platform.CreateFunctionInvocationResult{
+		Headers:    response.Header,
+		Body:       responseBody,
+		StatusCode: response.StatusCode,
+	}, nil
 }

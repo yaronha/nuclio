@@ -23,6 +23,7 @@ import (
 	"github.com/nuclio/nuclio/pkg/errors"
 	"github.com/nuclio/nuclio/pkg/platform"
 	"github.com/nuclio/nuclio/pkg/processor/build/runtime/test/suite"
+	"github.com/nuclio/nuclio/pkg/processor/trigger/http/test/suite"
 
 	"github.com/stretchr/testify/suite"
 )
@@ -40,14 +41,15 @@ func (suite *TestSuite) SetupSuite() {
 func (suite *TestSuite) TestBuildWithCompilationError() {
 	var err error
 
-	deployOptions := suite.GetDeployOptions("compilation-error",
+	createFunctionOptions := suite.GetDeployOptions("compilation-error",
 		suite.GetFunctionPath(suite.GetTestFunctionsDir(), "common", "compilation-error", "golang", "compilation-error.go"))
 
-	deployOptions.FunctionConfig.Spec.Build.NoBaseImagesPull = true
+	createFunctionOptions.FunctionConfig.Spec.Build.NoBaseImagesPull = true
 
-	_, err = suite.Platform.BuildFunction(&platform.BuildOptions{
-		Logger:         deployOptions.Logger,
-		FunctionConfig: deployOptions.FunctionConfig,
+	_, err = suite.Platform.CreateFunctionBuild(&platform.CreateFunctionBuildOptions{
+		Logger:         createFunctionOptions.Logger,
+		FunctionConfig: createFunctionOptions.FunctionConfig,
+		PlatformName:   suite.Platform.GetName(),
 	})
 
 	suite.Require().Error(err)
@@ -59,6 +61,18 @@ func (suite *TestSuite) TestBuildWithCompilationError() {
 
 	// error should yell about "fmt.NotAFunction" not existing
 	suite.Require().Contains(buffer.String(), "fmt.NotAFunction")
+}
+
+func (suite *TestSuite) TestBuildWithContextInitializer() {
+	createFunctionOptions := suite.GetDeployOptions("context-init",
+		suite.GetFunctionPath(suite.GetTestFunctionsDir(), "common", "context-init", "golang", "contextinit.go"))
+
+	suite.DeployFunctionAndRequest(createFunctionOptions,
+		&httpsuite.Request{
+			RequestMethod:        "POST",
+			RequestBody:          "",
+			ExpectedResponseBody: "User data initialized from context: 0",
+		})
 }
 
 func (suite *TestSuite) GetFunctionInfo(functionName string) buildsuite.FunctionInfo {
@@ -76,6 +90,9 @@ func (suite *TestSuite) GetFunctionInfo(functionName string) buildsuite.Function
 
 	case "json-parser-with-inline-function-config":
 		functionInfo.Path = []string{suite.GetTestFunctionsDir(), "common", "json-parser-with-inline-function-config", "golang", "parser.go"}
+
+	case "long-initialization":
+		functionInfo.Path = []string{suite.GetTestFunctionsDir(), "common", "long-initialization", "golang", "sleepy.go"}
 
 	default:
 		suite.Logger.InfoWith("Test skipped", "functionName", functionName)

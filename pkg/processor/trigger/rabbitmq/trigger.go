@@ -17,14 +17,16 @@ limitations under the License.
 package rabbitmq
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/nuclio/nuclio/pkg/common"
 	"github.com/nuclio/nuclio/pkg/errors"
+	"github.com/nuclio/nuclio/pkg/functionconfig"
 	"github.com/nuclio/nuclio/pkg/processor/trigger"
 	"github.com/nuclio/nuclio/pkg/processor/worker"
 
-	"github.com/nuclio/nuclio-sdk"
+	"github.com/nuclio/logger"
 	"github.com/streadway/amqp"
 )
 
@@ -39,7 +41,7 @@ type rabbitMq struct {
 	worker                     *worker.Worker
 }
 
-func newTrigger(parentLogger nuclio.Logger,
+func newTrigger(parentLogger logger.Logger,
 	workerAllocator worker.Allocator,
 	configuration *Configuration) (trigger.Trigger, error) {
 
@@ -57,7 +59,7 @@ func newTrigger(parentLogger nuclio.Logger,
 	return &newTrigger, nil
 }
 
-func (rmq *rabbitMq) Start(checkpoint trigger.Checkpoint) error {
+func (rmq *rabbitMq) Start(checkpoint functionconfig.Checkpoint) error {
 	var err error
 
 	rmq.Logger.InfoWith("Starting", "brokerUrl", rmq.configuration.URL)
@@ -67,6 +69,8 @@ func (rmq *rabbitMq) Start(checkpoint trigger.Checkpoint) error {
 	if err != nil {
 		return errors.Wrap(err, "Failed to allocate worker")
 	}
+
+	rmq.setEmptyParameters()
 
 	if err := rmq.createBrokerResources(); err != nil {
 		return errors.Wrap(err, "Failed to create broker resources")
@@ -78,7 +82,7 @@ func (rmq *rabbitMq) Start(checkpoint trigger.Checkpoint) error {
 	return nil
 }
 
-func (rmq *rabbitMq) Stop(force bool) (trigger.Checkpoint, error) {
+func (rmq *rabbitMq) Stop(force bool) (functionconfig.Checkpoint, error) {
 
 	// TODO
 	return nil, nil
@@ -88,13 +92,26 @@ func (rmq *rabbitMq) GetConfig() map[string]interface{} {
 	return common.StructureToMap(rmq.configuration)
 }
 
+func (rmq *rabbitMq) setEmptyParameters() {
+	if rmq.configuration.QueueName == "" {
+		rmq.configuration.QueueName = fmt.Sprintf("nuclio-%s-%s",
+			rmq.configuration.RuntimeConfiguration.Meta.Namespace,
+			rmq.configuration.RuntimeConfiguration.Meta.Name)
+	}
+
+	if len(rmq.configuration.Topics) == 0 {
+		rmq.configuration.Topics = []string{"*"}
+	}
+}
+
 func (rmq *rabbitMq) createBrokerResources() error {
 	var err error
 
 	rmq.Logger.InfoWith("Creating broker resources",
 		"brokerUrl", rmq.configuration.URL,
 		"exchangeName", rmq.configuration.ExchangeName,
-		"queueName", rmq.configuration.QueueName)
+		"queueName", rmq.configuration.QueueName,
+		"topics", rmq.configuration.Topics)
 
 	rmq.brokerConn, err = amqp.Dial(rmq.configuration.URL)
 	if err != nil {
@@ -138,17 +155,23 @@ func (rmq *rabbitMq) createBrokerResources() error {
 
 	rmq.Logger.DebugWith("Declared queue", "queueName", rmq.brokerQueue.Name)
 
-	err = rmq.brokerChannel.QueueBind(
-		rmq.brokerQueue.Name, // queue name
-		"*",                  // routing key
-		rmq.configuration.ExchangeName, // exchange
-		false,
-		nil)
-	if err != nil {
-		return errors.Wrap(err, "Failed to bind to queue")
-	}
+	for _, topic := range rmq.configuration.Topics {
+		err = rmq.brokerChannel.QueueBind(
+			rmq.brokerQueue.Name, // queue name
+			topic,                // routing key
+			rmq.configuration.ExchangeName, // exchange
+			false,
+			nil)
+		if err != nil {
+			return errors.Wrap(err, "Failed to bind to queue")
+		}
 
-	rmq.Logger.DebugWith("Bound queue", "queueName", rmq.brokerQueue.Name)
+		rmq.Logger.DebugWith("Bound queue to topic",
+			"queueName", rmq.brokerQueue.Name,
+			"topic", topic,
+			"exchangeName", rmq.configuration.ExchangeName)
+
+	}
 
 	rmq.brokerInputMessagesChannel, err = rmq.brokerChannel.Consume(
 		rmq.brokerQueue.Name, // queue
@@ -179,9 +202,9 @@ func (rmq *rabbitMq) handleBrokerMessages() {
 
 		// ack the message if we didn't fail to submit
 		if submitError == nil {
-			message.Ack(false)
+			message.Ack(false) // nolint: errcheck
 		} else {
-			errors.Wrap(submitError, "Failed to submit to worker")
+			rmq.Logger.WarnWith("Failed to submit to worker", "err", submitError)
 		}
 	}
 }

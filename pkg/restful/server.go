@@ -17,39 +17,47 @@ limitations under the License.
 package restful
 
 import (
+	"bytes"
+	"io/ioutil"
 	"net/http"
+	"time"
 
 	"github.com/nuclio/nuclio/pkg/errors"
+	"github.com/nuclio/nuclio/pkg/platformconfig"
 	"github.com/nuclio/nuclio/pkg/registry"
 
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
-	"github.com/nuclio/nuclio-sdk"
+	"github.com/nuclio/logger"
 )
 
-type Server struct {
-	Logger           nuclio.Logger
+// Server
+type Server interface {
+
+	// InstallMiddleware installs middlewares on a router
+	InstallMiddleware(router chi.Router) error
+}
+
+type AbstractServer struct {
+	Logger           logger.Logger
 	Enabled          bool
 	ListenAddress    string
 	Router           chi.Router
 	resourceRegistry *registry.Registry
-	conreteServer    interface{}
+	server           Server
 }
 
-type resourceInitializer interface {
-	Initialize(nuclio.Logger, interface{}) (chi.Router, error)
-}
-
-func NewServer(parentLogger nuclio.Logger,
+func NewAbstractServer(parentLogger logger.Logger,
 	resourceRegistry *registry.Registry,
-	conreteServer interface{}) (*Server, error) {
+	server Server,
+	configuration *platformconfig.WebServer) (*AbstractServer, error) {
 
 	var err error
 
-	newServer := &Server{
+	newServer := &AbstractServer{
 		Logger:           parentLogger.GetChild("server"),
 		resourceRegistry: resourceRegistry,
-		conreteServer:    conreteServer,
+		server:           server,
 	}
 
 	newServer.Router, err = newServer.createRouter()
@@ -57,66 +65,117 @@ func NewServer(parentLogger nuclio.Logger,
 		return nil, errors.Wrap(err, "Failed to create router")
 	}
 
-	return newServer, nil
-}
+	// first install request / response handler
+	newServer.Router.Use(newServer.requestResponseLogger())
 
-func (s *Server) Start() error {
+	// install the middleware
+	err = server.InstallMiddleware(newServer.Router)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to install middleware")
+	}
 
-	// if we're not enabled, we're done here
-	if !s.Enabled {
-		return nil
+	err = newServer.readConfiguration(configuration)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to read configuration")
 	}
 
 	// create the resources registered
-	for _, resourceName := range s.resourceRegistry.GetKinds() {
-		resourceInstance, _ := s.resourceRegistry.Get(resourceName)
+	for _, resourceName := range newServer.resourceRegistry.GetKinds() {
+		resourceInstance, _ := newServer.resourceRegistry.Get(resourceName)
 
 		// create the resource router and add it
-		resourceRouter, err := resourceInstance.(resourceInitializer).Initialize(s.Logger, s.conreteServer)
+		resourceRouter, err := resourceInstance.(Resource).Initialize(newServer.Logger, newServer.server)
 		if err != nil {
-			return errors.Wrapf(err, "Failed to create resource router for %s", resourceName)
+			return nil, errors.Wrapf(err, "Failed to create resource router for %s", resourceName)
 		}
 
 		// register the router into the root router
-		s.Router.Mount("/"+resourceName, resourceRouter)
+		newServer.Router.Mount("/"+resourceName, resourceRouter)
 
-		s.Logger.DebugWith("Registered resource", "name", resourceName)
+		newServer.Logger.DebugWith("Registered resource", "name", resourceName)
 	}
+
+	return newServer, nil
+}
+
+func (s *AbstractServer) Start() error {
 
 	// if we're not enabled, we're done here
 	if !s.Enabled {
-		s.Logger.DebugWith("Disabled, not listening")
-
+		s.Logger.Debug("AbstractServer disabled, not listening")
 		return nil
 	}
 
-	go http.ListenAndServe(s.ListenAddress, s.Router)
+	go http.ListenAndServe(s.ListenAddress, s.Router) // nolint: errcheck
 
 	s.Logger.InfoWith("Listening", "listenAddress", s.ListenAddress)
 
 	return nil
 }
 
-func (s *Server) InstallMiddleware(router chi.Router) error {
+func (s *AbstractServer) InstallMiddleware(router chi.Router) error {
 	router.Use(middleware.Recoverer)
 	router.Use(middleware.StripSlashes)
-	router.Use(setCORSOrigin)
 
 	return nil
 }
 
-func (s *Server) createRouter() (chi.Router, error) {
+func (s *AbstractServer) createRouter() (chi.Router, error) {
 	router := chi.NewRouter()
 
-	s.InstallMiddleware(router)
+	if err := s.InstallMiddleware(router); err != nil {
+		return nil, errors.Wrap(err, "Failed to install middleware")
+	}
 
 	return router, nil
 }
 
-// middleware that sets content type to JSON content type
-func setCORSOrigin(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		next.ServeHTTP(w, r)
-	})
+func (s *AbstractServer) readConfiguration(configuration *platformconfig.WebServer) error {
+	if configuration.Enabled == nil {
+		return errors.New("Enabled must carry a value")
+	}
+
+	// set configuration
+	s.Enabled = *configuration.Enabled
+	s.ListenAddress = configuration.ListenAddress
+
+	return nil
+}
+
+func (s *AbstractServer) requestResponseLogger() func(next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		fn := func(w http.ResponseWriter, request *http.Request) {
+			responseBodyBuffer := bytes.Buffer{}
+
+			// create a response wrapper so we can access stuff
+			responseWrapper := middleware.NewWrapResponseWriter(w, request.ProtoMajor)
+			responseWrapper.Tee(&responseBodyBuffer)
+
+			// take start time
+			requestStartTime := time.Now()
+
+			// get request body
+			requestBody, _ := ioutil.ReadAll(request.Body)
+
+			// restore body for further processing
+			request.Body = ioutil.NopCloser(bytes.NewBuffer(requestBody))
+
+			// when request processing is done, log the request / response
+			defer func() {
+				s.Logger.DebugWith("Handled request",
+					"requestMethod", request.Method,
+					"requestPath", request.URL,
+					"requestHeaders", request.Header,
+					"requestBody", string(requestBody),
+					"responseStatus", responseWrapper.Status(),
+					"responseBody", responseBodyBuffer.String(),
+					"responseTime", time.Since(requestStartTime))
+			}()
+
+			// call next middleware
+			next.ServeHTTP(responseWrapper, request)
+		}
+
+		return http.HandlerFunc(fn)
+	}
 }

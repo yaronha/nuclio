@@ -26,7 +26,8 @@ import (
 	"github.com/nuclio/nuclio/pkg/processor/trigger/poller"
 	"github.com/nuclio/nuclio/pkg/processor/worker"
 
-	"github.com/nuclio/nuclio-sdk"
+	"github.com/nuclio/logger"
+	"github.com/nuclio/nuclio-sdk-go"
 	"github.com/v3io/v3io-go-http"
 )
 
@@ -39,7 +40,7 @@ type v3ioItemPoller struct {
 	v3ioContainer *v3io.Container
 }
 
-func newTrigger(logger nuclio.Logger,
+func newTrigger(logger logger.Logger,
 	workerAllocator worker.Allocator,
 	configuration *Configuration) (trigger.Trigger, error) {
 
@@ -76,7 +77,7 @@ func (vip *v3ioItemPoller) GetNewEvents(eventsChan chan nuclio.Event) error {
 		go func(path string) {
 
 			// get changed objects from this path
-			vip.getItems(path, eventsChan)
+			vip.getItems(path, eventsChan) // nolint: errcheck
 
 			// reduce one from the wait group
 			itemsGetterWaitGroup.Done()

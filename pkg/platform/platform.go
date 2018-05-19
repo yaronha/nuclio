@@ -16,31 +16,76 @@ limitations under the License.
 
 package platform
 
-import (
-	"io"
-)
-
 // Platform defines the interface that any underlying function platform must provide for nuclio
 // to run over it
 type Platform interface {
 
+	//
+	// Function
+	//
+
 	// Build will locally build a processor image and return its name (or the error)
-	BuildFunction(buildOptions *BuildOptions) (*BuildResult, error)
+	CreateFunctionBuild(createFunctionBuildOptions *CreateFunctionBuildOptions) (*CreateFunctionBuildResult, error)
 
 	// Deploy will deploy a processor image to the platform (optionally building it, if source is provided)
-	DeployFunction(deployOptions *DeployOptions) (*DeployResult, error)
+	CreateFunction(createFunctionOptions *CreateFunctionOptions) (*CreateFunctionResult, error)
 
-	// UpdateOptions will update a previously deployed function
-	UpdateFunction(updateOptions *UpdateOptions) error
+	// UpdateFunction will update a previously deployed function
+	UpdateFunction(updateFunctionOptions *UpdateFunctionOptions) error
 
 	// DeleteFunction will delete a previously deployed function
-	DeleteFunction(deleteOptions *DeleteOptions) error
+	DeleteFunction(deleteFunctionOptions *DeleteFunctionOptions) error
 
-	// InvokeFunction will invoke a previously deployed function
-	InvokeFunction(invokeOptions *InvokeOptions, writer io.Writer) error
+	// CreateFunctionInvocation will invoke a previously deployed function
+	CreateFunctionInvocation(createFunctionInvocationOptions *CreateFunctionInvocationOptions) (*CreateFunctionInvocationResult, error)
 
-	// InvokeFunction will invoke a previously deployed function
-	GetFunctions(getOptions *GetOptions) ([]Function, error)
+	// GetFunctions will list existing functions
+	GetFunctions(getFunctionsOptions *GetFunctionsOptions) ([]Function, error)
+
+	//
+	// Project
+	//
+
+	// CreateProject will probably create a new project
+	CreateProject(createProjectOptions *CreateProjectOptions) error
+
+	// UpdateProject will update a previously existing project
+	UpdateProject(updateProjectOptions *UpdateProjectOptions) error
+
+	// DeleteProject will delete a previously existing project
+	DeleteProject(deleteProjectOptions *DeleteProjectOptions) error
+
+	// GetProjects will list existing projects
+	GetProjects(getProjectsOptions *GetProjectsOptions) ([]Project, error)
+
+	//
+	// Function event
+	//
+
+	// CreateFunctionEvent will create a new function event that can later be used as a template from
+	// which to invoke functions
+	CreateFunctionEvent(createFunctionEventOptions *CreateFunctionEventOptions) error
+
+	// UpdateFunctionEvent will update a previously existing function event
+	UpdateFunctionEvent(updateFunctionEventOptions *UpdateFunctionEventOptions) error
+
+	// DeleteFunctionEvent will delete a previously existing function event
+	DeleteFunctionEvent(deleteFunctionEventOptions *DeleteFunctionEventOptions) error
+
+	// GetFunctionEvents will list existing function events
+	GetFunctionEvents(getFunctionEventsOptions *GetFunctionEventsOptions) ([]FunctionEvent, error)
+
+	//
+	// Misc
+	//
+
+	// SetExternalIPAddresses configures the IP addresses invocations will use, if "via" is set to "external-ip".
+	// If this is not invoked, each platform will try to discover these addresses automatically
+	SetExternalIPAddresses(externalIPAddresses []string) error
+
+	// GetExternalIPAddresses returns the external IP addresses invocations will use, if "via" is set to "external-ip".
+	// These addresses are either set through SetExternalIPAddresses or automatically discovered
+	GetExternalIPAddresses() ([]string, error)
 
 	// GetDeployRequiresRegistry returns true if a registry is required for deploy, false otherwise
 	GetDeployRequiresRegistry() bool

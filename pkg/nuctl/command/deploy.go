@@ -18,7 +18,10 @@ package command
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/nuclio/nuclio/pkg/common"
 	"github.com/nuclio/nuclio/pkg/errors"
@@ -27,18 +30,26 @@ import (
 
 	"github.com/spf13/cobra"
 	"k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 type deployCommandeer struct {
-	cmd                      *cobra.Command
-	rootCommandeer           *RootCommandeer
-	functionConfig           functionconfig.Config
-	commands                 stringSliceFlag
-	encodedDataBindings      string
-	encodedTriggers          string
-	encodedLabels            string
-	encodedEnv               string
-	encodedRuntimeAttributes string
+	cmd                           *cobra.Command
+	rootCommandeer                *RootCommandeer
+	functionConfig                functionconfig.Config
+	readinessTimeout              time.Duration
+	volumes                       stringSliceFlag
+	commands                      stringSliceFlag
+	encodedDataBindings           string
+	encodedTriggers               string
+	encodedLabels                 string
+	encodedRuntimeAttributes      string
+	projectName                   string
+	resourceLimits                stringSliceFlag
+	resourceRequests              stringSliceFlag
+	encodedEnv                    stringSliceFlag
+	encodedFunctionPlatformConfig string
+	encodedBuildRuntimeAttributes string
 }
 
 func newDeployCommandeer(rootCommandeer *RootCommandeer) *deployCommandeer {
@@ -52,6 +63,28 @@ func newDeployCommandeer(rootCommandeer *RootCommandeer) *deployCommandeer {
 		Short: "Build and deploy a function, or deploy from an existing image",
 		RunE: func(cmd *cobra.Command, args []string) error {
 
+			// update build stuff
+			if len(args) == 1 {
+				commandeer.functionConfig.Meta.Name = args[0]
+			}
+
+			// parse volumes
+			if err := parseVolumes(commandeer.volumes, commandeer.functionConfig.Spec.Volumes); err != nil {
+				return errors.Wrap(err, "Failed to parse volumes")
+			}
+
+			// parse resource limits
+			if err := parseResourceAllocations(commandeer.resourceLimits,
+				&commandeer.functionConfig.Spec.Resources.Limits); err != nil {
+				return errors.Wrap(err, "Failed to parse resource limits")
+			}
+
+			// parse resource requests
+			if err := parseResourceAllocations(commandeer.resourceRequests,
+				&commandeer.functionConfig.Spec.Resources.Requests); err != nil {
+				return errors.Wrap(err, "Failed to parse resource requests")
+			}
+
 			// decode the JSON data bindings
 			if err := json.Unmarshal([]byte(commandeer.encodedDataBindings),
 				&commandeer.functionConfig.Spec.DataBindings); err != nil {
@@ -64,20 +97,43 @@ func newDeployCommandeer(rootCommandeer *RootCommandeer) *deployCommandeer {
 				return errors.Wrap(err, "Failed to decode triggers")
 			}
 
+			// decode the JSON function platform configuration
+			if err := json.Unmarshal([]byte(commandeer.encodedFunctionPlatformConfig),
+				&commandeer.functionConfig.Spec.Platform); err != nil {
+				return errors.Wrap(err, "Failed to decode function platform configuration")
+			}
+
 			// decode the JSON runtime attributes
 			if err := json.Unmarshal([]byte(commandeer.encodedRuntimeAttributes),
 				&commandeer.functionConfig.Spec.RuntimeAttributes); err != nil {
 				return errors.Wrap(err, "Failed to decode runtime attributes")
 			}
 
+			// decode the JSON build runtime attributes
+			if err := json.Unmarshal([]byte(commandeer.encodedBuildRuntimeAttributes),
+				&commandeer.functionConfig.Spec.Build.RuntimeAttributes); err != nil {
+				return errors.Wrap(err, "Failed to decode build runtime attributes")
+			}
+
 			// decode labels
-			commandeer.functionConfig.Meta.Labels = common.StringToStringMap(commandeer.encodedLabels)
+			commandeer.functionConfig.Meta.Labels = common.StringToStringMap(commandeer.encodedLabels, "=")
+
+			// if the project name was set, add it as a label
+			if commandeer.projectName != "" {
+				commandeer.functionConfig.Meta.Labels["nuclio.io/project-name"] = commandeer.projectName
+			}
 
 			// decode env
-			for envName, envValue := range common.StringToStringMap(commandeer.encodedEnv) {
+			for _, encodedEnvNameAndValue := range commandeer.encodedEnv {
+				envNameAndValue := strings.SplitN(encodedEnvNameAndValue, "=", 2)
+				if len(envNameAndValue) != 2 {
+					return fmt.Errorf("Environment variable must be in the form of name=value: %s",
+						encodedEnvNameAndValue)
+				}
+
 				commandeer.functionConfig.Spec.Env = append(commandeer.functionConfig.Spec.Env, v1.EnvVar{
-					Name:  envName,
-					Value: envValue,
+					Name:  envNameAndValue[0],
+					Value: envNameAndValue[1],
 				})
 			}
 
@@ -90,17 +146,10 @@ func newDeployCommandeer(rootCommandeer *RootCommandeer) *deployCommandeer {
 				return errors.Wrap(err, "Failed to initialize root")
 			}
 
-			err := prepareFunctionConfig(args,
-				rootCommandeer.platform.GetDeployRequiresRegistry(),
-				&commandeer.functionConfig)
-
-			if err != nil {
-				return err
-			}
-
-			_, err = rootCommandeer.platform.DeployFunction(&platform.DeployOptions{
-				Logger:         rootCommandeer.logger,
-				FunctionConfig: commandeer.functionConfig,
+			_, err := rootCommandeer.platform.CreateFunction(&platform.CreateFunctionOptions{
+				Logger:           rootCommandeer.loggerInstance,
+				FunctionConfig:   commandeer.functionConfig,
+				ReadinessTimeout: &commandeer.readinessTimeout,
 			})
 
 			return err
@@ -114,88 +163,100 @@ func newDeployCommandeer(rootCommandeer *RootCommandeer) *deployCommandeer {
 	return commandeer
 }
 
-func prepareFunctionConfig(args []string,
-	registryRequired bool,
-	functionConfig *functionconfig.Config) error {
+func addDeployFlags(cmd *cobra.Command,
+	functionConfig *functionconfig.Config,
+	commandeer *deployCommandeer) {
+	addBuildFlags(cmd, functionConfig, &commandeer.commands, &commandeer.encodedBuildRuntimeAttributes)
 
-	var functionName string
-	var specRegistryURL, specImageName, specImageVersion string
+	cmd.Flags().StringVar(&functionConfig.Spec.Description, "desc", "", "Function description")
+	cmd.Flags().StringVarP(&commandeer.encodedLabels, "labels", "l", "", "Additional function labels (lbl1=val1[,lbl2=val2,...])")
+	cmd.Flags().VarP(&commandeer.encodedEnv, "env", "e", "Environment variables env1=val1")
+	cmd.Flags().BoolVarP(&functionConfig.Spec.Disabled, "disabled", "d", false, "Start the function as disabled (don't run yet)")
+	cmd.Flags().IntVarP(&functionConfig.Spec.Replicas, "replicas", "", 1, "Set to 1 to use a static number of replicas")
+	cmd.Flags().IntVar(&functionConfig.Spec.MinReplicas, "min-replicas", 0, "Minimal number of function replicas")
+	cmd.Flags().IntVar(&functionConfig.Spec.MaxReplicas, "max-replicas", 0, "Maximal number of function replicas")
+	cmd.Flags().IntVar(&functionConfig.Spec.TargetCPU, "target-cpu", 75, "Target CPU when auto-scaling, in percentage")
+	cmd.Flags().BoolVar(&functionConfig.Spec.Publish, "publish", false, "Publish the function")
+	cmd.Flags().StringVar(&commandeer.encodedDataBindings, "data-bindings", "{}", "JSON-encoded data bindings for the function")
+	cmd.Flags().StringVar(&commandeer.encodedTriggers, "triggers", "{}", "JSON-encoded triggers for the function")
+	cmd.Flags().StringVar(&commandeer.encodedFunctionPlatformConfig, "platform-config", "{}", "JSON-encoded platform specific configuration")
+	cmd.Flags().StringVar(&functionConfig.Spec.Image, "run-image", "", "Name of an existing image to deploy (default - build a new image to deploy)")
+	cmd.Flags().StringVar(&functionConfig.Spec.RunRegistry, "run-registry", os.Getenv("NUCTL_RUN_REGISTRY"), "URL of a registry for pulling the image, if differs from -r/--registry (env: NUCTL_RUN_REGISTRY)")
+	cmd.Flags().StringVar(&commandeer.encodedRuntimeAttributes, "runtime-attrs", "{}", "JSON-encoded runtime attributes for the function")
+	cmd.Flags().DurationVar(&commandeer.readinessTimeout, "readiness-timeout", 30*time.Second, "maximum wait time for the function to be ready")
+	cmd.Flags().StringVar(&commandeer.projectName, "project-name", "", "name of project to which this function belongs to")
+	cmd.Flags().Var(&commandeer.volumes, "volume", "Volumes for the function (src1=dest1[,src2=dest2,...])")
+	cmd.Flags().Var(&commandeer.resourceLimits, "resource-limit", "Limits resources in the format of resource-name=quantity (e.g. cpu=3)")
+	cmd.Flags().Var(&commandeer.resourceRequests, "resource-request", "Requests resources in the format of resource-name=quantity (e.g. cpu=3)")
+}
 
-	// name can either be a positional argument or passed in the spec
-	if len(args) != 1 {
-		return errors.New("Function run requires a name")
-	}
+func parseResourceAllocations(values stringSliceFlag, resources *v1.ResourceList) error {
+	for _, value := range values {
 
-	functionName = args[0]
+		// split the value @ =
+		resourceNameAndQuantity := strings.Split(value, "=")
 
-	// function can either be in the path, received inline or an executable via handler
-	if functionConfig.Spec.Build.Path == "" &&
-		functionConfig.Spec.ImageName == "" {
-
-		if functionConfig.Spec.Runtime != "shell" {
-			return errors.New("Function path must be provided when specified runtime isn't shell")
-
+		// must be exactly 2 (resource name, quantity)
+		if len(resourceNameAndQuantity) != 2 {
+			return fmt.Errorf("Resource allocation %s not in the format of resource-name=quantity", value)
 		}
 
-		// did user give handler to an executable
-		if functionConfig.Spec.Handler == "" {
-			return errors.New("If shell runtime is specified, function path or handler name must be provided")
+		resourceName := v1.ResourceName(resourceNameAndQuantity[0])
+		resourceQuantityString := resourceNameAndQuantity[1]
+
+		resourceQuantity, err := resource.ParseQuantity(resourceQuantityString)
+		if err != nil {
+			return errors.Wrap(err, "Failed to parse quantity")
 		}
+
+		if *resources == nil {
+			*resources = v1.ResourceList{}
+		}
+
+		// set resource
+		(*resources)[resourceName] = resourceQuantity
 	}
-
-	if functionConfig.Spec.Build.Registry == "" && registryRequired {
-		return errors.New("A registry is required; can also be specified in spec.image or via a NUCTL_REGISTRY environment variable")
-	}
-
-	if functionConfig.Spec.Build.ImageName == "" {
-
-		// use the function name if image name not provided in specfile
-		functionConfig.Spec.Build.ImageName = functionName
-	}
-
-	// if the image name was not provided in command line / env, take it from the spec image
-	if functionConfig.Spec.Build.ImageName == "" {
-		functionConfig.Spec.Build.ImageName = specImageName
-	}
-
-	// same for version
-	if functionConfig.Spec.Build.ImageVersion == "latest" && specImageVersion != "" {
-		functionConfig.Spec.Build.ImageVersion = specImageVersion
-	}
-
-	// same for push registry
-	if functionConfig.Spec.Build.Registry == "" {
-		functionConfig.Spec.Build.Registry = specRegistryURL
-	}
-
-	// if the run registry wasn't specified, take the build registry
-	if functionConfig.Spec.RunRegistry == "" {
-		functionConfig.Spec.RunRegistry = functionConfig.Spec.Build.Registry
-	}
-
-	// set function name
-	functionConfig.Meta.Name = functionName
 
 	return nil
 }
 
-func addDeployFlags(cmd *cobra.Command,
-	functionConfig *functionconfig.Config,
-	commandeer *deployCommandeer) {
-	addBuildFlags(cmd, functionConfig, &commandeer.commands)
+func parseVolumes(volumes stringSliceFlag, originVolumes []functionconfig.Volume) error {
+	for volumeIndex, volume := range volumes {
 
-	cmd.Flags().StringVar(&functionConfig.Spec.Description, "desc", "", "Function description")
-	cmd.Flags().StringVarP(&commandeer.encodedLabels, "labels", "l", "", "Additional function labels (lbl1=val1[,lbl2=val2,...])")
-	cmd.Flags().StringVarP(&commandeer.encodedEnv, "env", "e", "", "Environment variables (env1=val1[,env2=val2,...])")
-	cmd.Flags().BoolVarP(&functionConfig.Spec.Disabled, "disabled", "d", false, "Start the function as disabled (don't run yet)")
-	cmd.Flags().IntVar(&functionConfig.Spec.HTTPPort, "port", 0, "Public HTTP port (NodePort)")
-	cmd.Flags().IntVarP(&functionConfig.Spec.Replicas, "replicas", "", 1, "Set to 1 to use a static number of replicas")
-	cmd.Flags().IntVar(&functionConfig.Spec.MinReplicas, "min-replicas", 0, "Minimal number of function replicas")
-	cmd.Flags().IntVar(&functionConfig.Spec.MaxReplicas, "max-replicas", 0, "Maximal number of function replicas")
-	cmd.Flags().BoolVar(&functionConfig.Spec.Publish, "publish", false, "Publish the function")
-	cmd.Flags().StringVar(&commandeer.encodedDataBindings, "data-bindings", "{}", "JSON-encoded data bindings for the function")
-	cmd.Flags().StringVar(&commandeer.encodedTriggers, "triggers", "{}", "JSON-encoded triggers for the function")
-	cmd.Flags().StringVar(&functionConfig.Spec.ImageName, "run-image", "", "Name of an existing image to deploy (default - build a new image to deploy)")
-	cmd.Flags().StringVar(&functionConfig.Spec.RunRegistry, "run-registry", os.Getenv("NUCTL_RUN_REGISTRY"), "URL of a registry for pulling the image, if differs from -r/--registry (env: NUCTL_RUN_REGISTRY)")
-	cmd.Flags().StringVar(&commandeer.encodedRuntimeAttributes, "runtime-attrs", "{}", "JSON-encoded runtime attributes for the function")
+		// decode volumes
+		volumeSrcAndDestination := strings.Split(volume, ":")
+
+		// must be exactly 2 (resource name, quantity)
+		if len(volumeSrcAndDestination) != 2 || len(volumeSrcAndDestination[0]) == 0 || len(volumeSrcAndDestination[1]) == 0 {
+			return fmt.Errorf("Volume format %s not in the format of volume-src:volume-destination", volumeSrcAndDestination)
+		}
+
+		// generate simple volume name
+		volumeName := fmt.Sprintf("volume-%v", volumeIndex+1)
+
+		// if originVolumes is nil generate empty one
+		if originVolumes == nil {
+			originVolumes = []functionconfig.Volume{}
+		}
+
+		originVolumes = append(originVolumes,
+			functionconfig.Volume{
+				Volume: v1.Volume{
+					Name: volumeName,
+					VolumeSource: v1.VolumeSource{
+						HostPath: &v1.HostPathVolumeSource{
+							Path: volumeSrcAndDestination[0],
+						},
+					},
+				},
+				VolumeMount: v1.VolumeMount{
+					Name:      volumeName,
+					MountPath: volumeSrcAndDestination[1],
+				},
+			},
+		)
+
+	}
+
+	return nil
 }

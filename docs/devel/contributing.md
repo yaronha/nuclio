@@ -1,4 +1,5 @@
-# How to contribute to nuclio
+# How to Contribute to nuclio
+
 This guide will guide you through the process of setting up a development environment and contributing to nuclio. 
 
 ## Set up some prerequisites
@@ -11,30 +12,39 @@ Obviously, you'll need:
 - Kubernetes 1.7+ (for testing, mostly) - `minikube` recommended (you can follow the [minikube getting started guide](/docs/setup/k8s/install/k8s-install-minikube.md))
 
 ## Getting the source
-Fork nuclio / nuclio-sdk and clone them locally:
+Fork nuclio and clone it:
 
-```bash
+```sh
 git clone https://github.com/<your username>/nuclio.git $GOPATH/src/github.com/nuclio/nuclio
-git clone https://github.com/<your username>/nuclio-sdk.git $GOPATH/src/github.com/nuclio/nuclio-sdk
+```
+
+Check out the development branch, because that's where all the goodness happens:
+
+```sh
+cd $GOPATH/src/github.com/nuclio/nuclio && git checkout development
+```
+
+Now `go get` some dependencies that are injected into functions and cannot be vendored:
+
+```sh
+go get github.com/v3io/v3io-go-http/... && go get github.com/nuclio/logger/... && go get github.com/nuclio/nuclio-sdk-go/... && go get github.com/nuclio/amqp/...
 ```
 
 Build nuclio artifacts (nuctl, docker images):
 
-```bash
-cd $GOPATH/src/github.com/nuclio/nuclio && unset NUCLIO_TAG && make build
+```sh
+make build
 ```
 
 You should now have quite a few `nuclio/<something>` images tagged as `latest-amd64` along with `nuctl-latest-<os>-amd64`, symlinked as `nuctl` under `$GOPATH/bin`. Let's run a few tests:
 
-```bash
+```sh
 make lint test
 ``` 
 
-This may take a while (about 5 minutes) and only needs docker. End to end testing on Kubernetes is still done manually.
+This may take a while (about 10 minutes) and only needs docker. End to end testing on Kubernetes is still done manually. Create a feature branch from development (nuclio follows gitflow):
 
-Create a feature branch from development (nuclio follows gitflow):
-
-```bash
+```sh
 git checkout -b my-feature
 ```
 

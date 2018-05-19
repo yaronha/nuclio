@@ -45,26 +45,23 @@ func (suite *TestSuite) TestOutputs() {
 
 	expectedResponseHeaders := map[string]string{
 		"content-type": "text/plain; charset=utf-8",
-		"header1": "value1",
+		"header1":      "value1",
 	}
 
-	deployOptions := suite.GetDeployOptions("outputter",
+	createFunctionOptions := suite.GetDeployOptions("outputter",
 		suite.GetFunctionPath("outputter"))
 
-	deployOptions.FunctionConfig.Spec.Handler = "outputter.sh:main"
-	deployOptions.FunctionConfig.Spec.Env = []v1.EnvVar{
+	createFunctionOptions.FunctionConfig.Spec.Handler = "outputter.sh:main"
+	createFunctionOptions.FunctionConfig.Spec.Env = []v1.EnvVar{
 		{Name: "ENV1", Value: "value1"},
 		{Name: "ENV2", Value: "value2"},
 	}
-	deployOptions.FunctionConfig.Spec.RuntimeAttributes = map[string]interface{}{
+	createFunctionOptions.FunctionConfig.Spec.RuntimeAttributes = map[string]interface{}{
 		"arguments":       "first second",
 		"responseHeaders": map[string]interface{}{"header1": "value1"},
 	}
 
-	suite.DeployFunction(deployOptions, func(deployResult *platform.DeployResult) bool {
-		err := suite.WaitForContainer(deployResult.Port)
-		suite.Require().NoError(err, "Can't reach container on port %d", deployResult.Port)
-
+	suite.DeployFunction(createFunctionOptions, func(deployResult *platform.CreateFunctionResult) bool {
 		testRequests := []httpsuite.Request{
 			{
 				Name:                       "return body",
@@ -94,7 +91,7 @@ func (suite *TestSuite) TestOutputs() {
 			},
 			{
 				Name: "return overridden arguments",
-				RequestHeaders: map[string]string{
+				RequestHeaders: map[string]interface{}{
 					"x-nuclio-arguments": "overridefirst overridesecond",
 				},
 				RequestBody:                "return_arguments",
@@ -127,6 +124,16 @@ func (suite *TestSuite) TestOutputs() {
 
 		return true
 	})
+}
+
+func (suite *TestSuite) TestStress() {
+
+	// Create blastConfiguration using default configurations + changes for shell specification
+	blastConfiguration := suite.NewBlastConfiguration()
+	blastConfiguration.Handler = "outputter.sh:main"
+
+	// Create stress test using suite.BlastHTTP
+	suite.BlastHTTP(blastConfiguration)
 }
 
 func TestIntegrationSuite(t *testing.T) {

@@ -15,6 +15,8 @@ limitations under the License.
 */
 
 // Package errors provides an api similar to github.com/nuclio/nuclio/pkg/errors
+// However we don't carry stack trace around for performance
+// (see https://github.com/pkg/errors/issues/124)
 package errors
 
 // All error values returned from this package implement fmt.Formatter and can
@@ -24,6 +26,7 @@ package errors
 //     %+v   extended format. Will print stack trace of errors
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -125,6 +128,11 @@ func (err *Error) Error() string {
 	return err.message
 }
 
+// Cause returns the cause of the error
+func (err *Error) Cause() error {
+	return err.cause
+}
+
 func asError(err error) *Error {
 	errObj, ok := err.(*Error)
 	if !ok {
@@ -169,9 +177,22 @@ func GetErrorStack(err error, depth int) []error {
 	return errors
 }
 
+// GetErrorStackString returns the error stack as a string
+func GetErrorStackString(err error, depth int) string {
+	buffer := bytes.Buffer{}
+
+	PrintErrorStack(&buffer, err, depth)
+
+	return buffer.String()
+}
+
 // PrintErrorStack prints the error stack into out upto depth levels
 // If n == 1 then prints the whole stack
 func PrintErrorStack(out io.Writer, err error, depth int) {
+	if err == nil {
+		return
+	}
+
 	pathLen := 40
 
 	stack := GetErrorStack(err, depth)
@@ -198,16 +219,29 @@ func PrintErrorStack(out io.Writer, err error, depth int) {
 			fmt.Fprintf(out, "\n    %s:%d", trimPath(errObj.fileName, pathLen), errObj.lineNumber)
 		}
 	}
-	out.Write([]byte{'\n'})
+
+	out.Write([]byte{'\n'}) // nolint: errcheck
 }
 
 // Cause is the cause of the error
 func Cause(err error) error {
-	errObj := asError(err)
-	if errObj == nil {
+	var cause error
+
+	if err == nil {
 		return nil
 	}
-	return errObj.cause
+
+	errAsError := asError(err)
+	if errAsError != nil {
+		cause = errAsError.cause
+	}
+
+	// treat the err as simply an error
+	if cause == nil {
+		cause = err
+	}
+
+	return cause
 }
 
 // sumLengths return sum of lengths of strings

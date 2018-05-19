@@ -17,23 +17,28 @@ limitations under the License.
 package playground
 
 import (
+	"fmt"
 	"io/ioutil"
 	"net/http"
 	"path"
+	"strings"
+	"time"
 
+	"github.com/nuclio/nuclio/pkg/common"
 	"github.com/nuclio/nuclio/pkg/dockerclient"
 	"github.com/nuclio/nuclio/pkg/dockercreds"
 	"github.com/nuclio/nuclio/pkg/errors"
 	"github.com/nuclio/nuclio/pkg/platform"
+	"github.com/nuclio/nuclio/pkg/platformconfig"
 	"github.com/nuclio/nuclio/pkg/restful"
 
 	"github.com/go-chi/chi"
 	"github.com/go-chi/cors"
-	"github.com/nuclio/nuclio-sdk"
+	"github.com/nuclio/logger"
 )
 
 type Server struct {
-	*restful.Server
+	*restful.AbstractServer
 	assetsDir             string
 	sourcesDir            string
 	dockerKeyDir          string
@@ -45,14 +50,16 @@ type Server struct {
 	NoPullBaseImages      bool
 }
 
-func NewServer(parentLogger nuclio.Logger,
+func NewServer(parentLogger logger.Logger,
 	assetsDir string,
 	sourcesDir string,
 	dockerKeyDir string,
 	defaultRegistryURL string,
 	defaultRunRegistryURL string,
 	platform platform.Platform,
-	noPullBaseImages bool) (*Server, error) {
+	noPullBaseImages bool,
+	configuration *platformconfig.WebServer,
+	defaultCredRefreshInterval *time.Duration) (*Server, error) {
 
 	var err error
 
@@ -61,7 +68,7 @@ func NewServer(parentLogger nuclio.Logger,
 		return nil, errors.Wrap(err, "Failed to create docker client")
 	}
 
-	newDockerCreds, err := dockercreds.NewDockerCreds(parentLogger, newDockerClient)
+	newDockerCreds, err := dockercreds.NewDockerCreds(parentLogger, newDockerClient, defaultCredRefreshInterval)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to create docker loginner")
 	}
@@ -79,7 +86,11 @@ func NewServer(parentLogger nuclio.Logger,
 	}
 
 	// create server
-	newServer.Server, err = restful.NewServer(parentLogger, PlaygroundResourceRegistrySingleton, newServer)
+	newServer.AbstractServer, err = restful.NewAbstractServer(parentLogger,
+		PlaygroundResourceRegistrySingleton,
+		newServer,
+		configuration)
+
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to create restful server")
 	}
@@ -94,12 +105,26 @@ func NewServer(parentLogger nuclio.Logger,
 		newServer.Logger.WarnWith("Failed to login with docker keys", "err", err.Error())
 	}
 
+	// if the docker registry was not specified, try to take from credentials. this way the user only needs
+	// to specify the secret to that registry and URL will be taken from there
+	if newServer.defaultRegistryURL == "" {
+		newServer.defaultRegistryURL = newServer.getRegistryURL()
+	}
+
+	// for logging purposes, duration can't be nil (stringer is called on nil and panics)
+	if defaultCredRefreshInterval == nil {
+		noDefaultCredRefreshInterval := 0 * time.Second
+
+		defaultCredRefreshInterval = &noDefaultCredRefreshInterval
+	}
+
 	newServer.Logger.InfoWith("Initialized",
 		"assetsDir", assetsDir,
 		"sourcesDir", sourcesDir,
 		"dockerKeyDir", dockerKeyDir,
 		"defaultRegistryURL", defaultRegistryURL,
-		"defaultRunRegistryURL", defaultRunRegistryURL)
+		"defaultRunRegistryURL", defaultRunRegistryURL,
+		"defaultCredRefreshInterval", defaultCredRefreshInterval)
 
 	return newServer, nil
 }
@@ -117,7 +142,7 @@ func (s *Server) GetRunRegistryURL() string {
 }
 
 func (s *Server) InstallMiddleware(router chi.Router) error {
-	if err := s.Server.InstallMiddleware(router); err != nil {
+	if err := s.AbstractServer.InstallMiddleware(router); err != nil {
 		return err
 	}
 
@@ -137,6 +162,43 @@ func (s *Server) InstallMiddleware(router chi.Router) error {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(201)
+}
+
+func (s *Server) getRegistryURL() string {
+	registryURL := ""
+	credentials := s.dockerCreds.GetCredentials()
+
+	if len(credentials) >= 1 {
+		registryURL = credentials[0].URL
+
+		// if the user specified the docker hub, we can't use this as-is. add the user name to the URL
+		// to generate a valid URL
+		for _, dockerPattern := range []string{
+			".docker.com",
+			".docker.io",
+		} {
+			if strings.HasSuffix(registryURL, dockerPattern) {
+				registryURL = fmt.Sprintf("%s/%s", registryURL, credentials[0].Username)
+				break
+			}
+		}
+
+		// trim prefixes
+		registryURL = common.StripPrefixes(registryURL,
+			[]string{
+				"https://",
+				"http://",
+			})
+
+		s.Logger.InfoWith("Using registry from credentials", "url", registryURL)
+	}
+
+	// if we're still without a valid registry, use a hardcoded one (TODO: remove this)
+	if registryURL == "" {
+		registryURL = "localhost:5000"
+	}
+
+	return registryURL
 }
 
 func (s *Server) addAssetRoutes() error {
@@ -161,7 +223,7 @@ func (s *Server) serveIndex(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	writer.Write(indexHTMLContents)
+	writer.Write(indexHTMLContents) // nolint: errcheck
 }
 
 func (s *Server) loadDockerKeys(dockerKeyDir string) error {

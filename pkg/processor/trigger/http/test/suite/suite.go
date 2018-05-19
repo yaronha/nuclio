@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -28,18 +29,35 @@ import (
 	"github.com/nuclio/nuclio/pkg/platform"
 	"github.com/nuclio/nuclio/pkg/processor/test/suite"
 	"github.com/nuclio/nuclio/test/compare"
+
+	"github.com/nuclio/nuclio-sdk-go"
 )
 
-var (
-	defaultContainerTimeout = 5 * time.Second
-)
+// EventFields for events
+type EventFields struct {
+	ID             nuclio.ID              `json:"id,omitempty"`
+	TriggerClass   string                 `json:"triggerClass,omitempty"`
+	TriggerKind    string                 `json:"eventType,omitempty"`
+	ContentType    string                 `json:"contentType,omitempty"`
+	Headers        map[string]interface{} `json:"headers,omitempty"`
+	Timestamp      time.Time              `json:"timestamp,omitempty"`
+	Path           string                 `json:"path,omitempty"`
+	URL            string                 `json:"url,omitempty"`
+	Method         string                 `json:"method,omitempty"`
+	ShardID        int                    `json:"shardID,omitempty"`
+	TotalNumShards int                    `json:"totalNumShards,omitempty"`
+	Type           string                 `json:"type,omitempty"`
+	TypeVersion    string                 `json:"typeVersion,omitempty"`
+	Version        string                 `json:"version,omitempty"`
+	Body           string                 `json:"body,omitempty"`
+}
 
 // Request holds information about test HTTP request and response
 type Request struct {
 	Name string
 
 	RequestBody     string
-	RequestHeaders  map[string]string
+	RequestHeaders  map[string]interface{}
 	RequestLogLevel *string
 	RequestMethod   string
 	RequestPath     string
@@ -67,8 +85,19 @@ func (suite *TestSuite) SetupTest() {
 	}
 }
 
-func (suite *TestSuite) DeployFunctionAndRequest(deployOptions *platform.DeployOptions,
-	request *Request) *platform.DeployResult {
+// DeployFunctionAndExpectError runs a function, expecting an error
+func (suite *TestSuite) DeployFunctionAndExpectError(createFunctionOptions *platform.CreateFunctionOptions, expectedMessage string) {
+
+	// add some more common CreateFunctionOptions
+	suite.PopulateDeployOptions(createFunctionOptions)
+
+	_, err := suite.Platform.CreateFunction(createFunctionOptions)
+	suite.Require().Error(err, expectedMessage)
+}
+
+// DeployFunctionAndRequest deploys a function and call it with request
+func (suite *TestSuite) DeployFunctionAndRequest(createFunctionOptions *platform.CreateFunctionOptions,
+	request *Request) *platform.CreateFunctionResult {
 
 	defaultStatusCode := http.StatusOK
 	if request.ExpectedResponseStatusCode == nil {
@@ -88,8 +117,7 @@ func (suite *TestSuite) DeployFunctionAndRequest(deployOptions *platform.DeployO
 		request.RequestMethod = "POST"
 	}
 
-	return suite.DeployFunction(deployOptions, func(deployResult *platform.DeployResult) bool {
-		suite.WaitForContainer(deployResult.Port)
+	return suite.DeployFunction(createFunctionOptions, func(deployResult *platform.CreateFunctionResult) bool {
 
 		// modify request port to that of the deployed
 		request.RequestPort = deployResult.Port
@@ -108,7 +136,15 @@ func (suite *TestSuite) SendRequestVerifyResponse(request *Request) bool {
 		"requestBody", request.RequestBody,
 		"requestLogLevel", request.RequestLogLevel)
 
-	url := fmt.Sprintf("http://localhost:%d%s", request.RequestPort, request.RequestPath)
+	baseURL := "localhost"
+
+	// change verify-url if needed to ask from docker ip
+	if os.Getenv("NUCLIO_TEST_HOST") != "" {
+		baseURL = os.Getenv("NUCLIO_TEST_HOST")
+	}
+
+	// Send request to proper url
+	url := fmt.Sprintf("http://%s:%d%s", baseURL, request.RequestPort, request.RequestPath)
 
 	// create a request
 	httpRequest, err := http.NewRequest(request.RequestMethod, url, strings.NewReader(request.RequestBody))
@@ -117,7 +153,7 @@ func (suite *TestSuite) SendRequestVerifyResponse(request *Request) bool {
 	// if there are request headers, add them
 	if request.RequestHeaders != nil {
 		for requestHeaderName, requestHeaderValue := range request.RequestHeaders {
-			httpRequest.Header.Add(requestHeaderName, requestHeaderValue)
+			httpRequest.Header.Add(requestHeaderName, fmt.Sprintf("%v", requestHeaderValue))
 		}
 	} else {
 		httpRequest.Header.Add("Content-Type", "text/plain")
@@ -165,7 +201,7 @@ func (suite *TestSuite) SendRequestVerifyResponse(request *Request) bool {
 	case string:
 		suite.Require().Equal(typedExpectedResponseBody, string(body))
 
-		// if it's a map - assume JSON
+	// if it's a map - assume JSON
 	case map[string]interface{}:
 
 		// verify content type is JSON
@@ -179,6 +215,8 @@ func (suite *TestSuite) SendRequestVerifyResponse(request *Request) bool {
 		suite.Require().True(compare.CompareNoOrder(typedExpectedResponseBody, unmarshalledBody))
 	case *regexp.Regexp:
 		suite.Require().Regexp(typedExpectedResponseBody, string(body))
+	case func([]byte):
+		typedExpectedResponseBody(body)
 	}
 
 	// if there are logs expected, verify them
@@ -231,21 +269,4 @@ func (suite *TestSuite) subMap(source, keys map[string]interface{}) map[string]i
 	}
 
 	return sub
-}
-
-// WaitForContainer wait for container to be ready on port
-func (suite *TestSuite) WaitForContainer(port int) error {
-	start := time.Now()
-	url := fmt.Sprintf("http://localhost:%d", port)
-	var err error
-
-	for time.Since(start) <= defaultContainerTimeout {
-		_, err = http.Get(url)
-		if err == nil {
-			break
-		}
-		time.Sleep(time.Millisecond)
-	}
-
-	return err
 }

@@ -21,16 +21,16 @@ import (
 	"github.com/nuclio/nuclio/pkg/nuctl"
 	"github.com/nuclio/nuclio/pkg/platform"
 
-	"github.com/nuclio/nuclio-sdk"
+	"github.com/nuclio/logger"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type deleter struct {
-	logger   nuclio.Logger
+	logger   logger.Logger
 	platform platform.Platform
 }
 
-func newDeleter(parentLogger nuclio.Logger, platform platform.Platform) (*deleter, error) {
+func newDeleter(parentLogger logger.Logger, platform platform.Platform) (*deleter, error) {
 	newdeleter := &deleter{
 		logger:   parentLogger.GetChild("deleter"),
 		platform: platform,
@@ -39,16 +39,16 @@ func newDeleter(parentLogger nuclio.Logger, platform platform.Platform) (*delete
 	return newdeleter, nil
 }
 
-func (d *deleter) delete(consumer *consumer, deleteOptions *platform.DeleteOptions) error {
+func (d *deleter) delete(consumer *consumer, deleteFunctionOptions *platform.DeleteFunctionOptions) error {
 	var err error
 
-	resourceName, _, err := nuctl.ParseResourceIdentifier(deleteOptions.FunctionConfig.Meta.Name)
+	resourceName, _, err := nuctl.ParseResourceIdentifier(deleteFunctionOptions.FunctionConfig.Meta.Name)
 	if err != nil {
 		return errors.Wrap(err, "Failed to parse resource identifier")
 	}
 
 	// get specific function CR
-	err = consumer.functioncrClient.Delete(deleteOptions.FunctionConfig.Meta.Namespace, resourceName, &meta_v1.DeleteOptions{})
+	err = consumer.nuclioClientSet.NuclioV1beta1().Functions(deleteFunctionOptions.FunctionConfig.Meta.Namespace).Delete(resourceName, &meta_v1.DeleteOptions{})
 	if err != nil {
 		return errors.Wrap(err, "Failed to delete function CR")
 	}

@@ -18,33 +18,30 @@ package local
 
 import (
 	"fmt"
-	"strconv"
 
-	"github.com/nuclio/nuclio/pkg/dockerclient"
+	"github.com/nuclio/nuclio/pkg/errors"
 	"github.com/nuclio/nuclio/pkg/functionconfig"
 	"github.com/nuclio/nuclio/pkg/platform"
 
-	"github.com/nuclio/nuclio-sdk"
+	"github.com/nuclio/logger"
 )
 
 type function struct {
 	platform.AbstractFunction
-	container dockerclient.Container
 }
 
-func newFunction(parentLogger nuclio.Logger,
+func newFunction(parentLogger logger.Logger,
 	parentPlatform platform.Platform,
 	config *functionconfig.Config,
-	container *dockerclient.Container) (*function, error) {
-	newAbstractFunction, err := platform.NewAbstractFunction(parentLogger, parentPlatform, config)
+	status *functionconfig.Status) (*function, error) {
+
+	newFunction := &function{}
+	newAbstractFunction, err := platform.NewAbstractFunction(parentLogger, parentPlatform, config, status, newFunction)
 	if err != nil {
 		return nil, err
 	}
 
-	newFunction := &function{
-		AbstractFunction: *newAbstractFunction,
-		container:        *container,
-	}
+	newFunction.AbstractFunction = *newAbstractFunction
 
 	return newFunction, nil
 }
@@ -53,19 +50,17 @@ func newFunction(parentLogger nuclio.Logger,
 func (f *function) Initialize([]string) error {
 	var err error
 
-	f.Config.Spec.HTTPPort, err = strconv.Atoi(f.container.HostConfig.PortBindings["8080/tcp"][0].HostPort)
-
 	return err
-}
-
-// GetState returns the state of the function
-func (f *function) GetState() string {
-	return "RUNNING"
 }
 
 // GetInvokeURL gets the IP of the cluster hosting the function
 func (f *function) GetInvokeURL(invokeViaType platform.InvokeViaType) (string, error) {
-	return fmt.Sprintf("%s:%d", "localhost", f.Config.Spec.HTTPPort), nil
+	host, port, err := f.GetExternalIPInvocationURL()
+	if err != nil {
+		return "", errors.Wrap(err, "Failed to get external IP invocation URL")
+	}
+
+	return fmt.Sprintf("%s:%d", host, port), nil
 }
 
 // GetIngresses returns all ingresses for this function

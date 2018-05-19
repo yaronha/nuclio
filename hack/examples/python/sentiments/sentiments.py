@@ -19,10 +19,10 @@
 # @nuclio.configure
 #
 # function.yaml:
-#   apiVersion: "nuclio.io/v1"
+#   apiVersion: "nuclio.io/v1beta1"
 #   kind: "Function"
 #   spec:
-#     runtime: "python"
+#     runtime: "python:3.6"
 #
 #     build:
 #       commands:

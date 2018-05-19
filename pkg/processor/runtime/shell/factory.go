@@ -17,17 +17,25 @@ limitations under the License.
 package shell
 
 import (
+	"github.com/nuclio/nuclio/pkg/errors"
 	"github.com/nuclio/nuclio/pkg/processor/runtime"
 
-	"github.com/nuclio/nuclio-sdk"
+	"github.com/nuclio/logger"
 )
 
 type factory struct{}
 
-func (f *factory) Create(parentLogger nuclio.Logger,
+func (f *factory) Create(parentLogger logger.Logger,
 	runtimeConfiguration *runtime.Configuration) (runtime.Runtime, error) {
 
-	return NewRuntime(parentLogger.GetChild("shell"), runtimeConfiguration)
+	shellLogger := parentLogger.GetChild("shell")
+
+	newConfiguration, err := NewConfiguration(runtimeConfiguration)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to parse shell runtime configuration")
+	}
+
+	return NewRuntime(shellLogger, newConfiguration)
 }
 
 // register factory

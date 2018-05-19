@@ -64,10 +64,9 @@ event is the current event, it contains the following:
 	- size: int
 	- timestamp: Date
 	- url: string
-	- version: int
 
 
 If you use your own base image, make sure to set NODE_PATH.
-In nuclio/handler-nodejs image NODE_PATH is set to /usr/local/lib/node_modules
+In nuclio/handler-nodejs-alpine image NODE_PATH is set to /usr/local/lib/node_modules
 */
 package nodejs

@@ -24,35 +24,73 @@ import (
 
 // DataBinding holds configuration for a databinding
 type DataBinding struct {
-	Name    string            `json:"name,omitempty"`
-	Class   string            `json:"class"`
-	URL     string            `json:"url"`
-	Path    string            `json:"path,omitempty"`
-	Query   string            `json:"query,omitempty"`
-	Secret  string            `json:"secret,omitempty"`
-	Options map[string]string `json:"options,omitempty"`
+	Name       string            `json:"name,omitempty"`
+	Class      string            `json:"class"`
+	Kind       string            `json:"kind"`
+	URL        string            `json:"url"`
+	Path       string            `json:"path,omitempty"`
+	Query      string            `json:"query,omitempty"`
+	Secret     string            `json:"secret,omitempty"`
+	Attributes map[string]string `json:"attributes,omitempty"`
+}
+
+// Checkpoint is a partition checkpoint
+type Checkpoint *string
+
+// Partition is a partition information
+type Partition struct {
+	ID         string     `json:"id"`
+	Checkpoint Checkpoint `json:"checkpoint,omitempty"`
+}
+
+// VolumeAndMount stores simple volume and mount
+type Volume struct {
+	Volume      v1.Volume      `json:"volume,omitempty"`
+	VolumeMount v1.VolumeMount `json:"volumeMount,omitempty"`
 }
 
 // Trigger holds configuration for a trigger
 type Trigger struct {
-	Class         string                 `json:"class"`
-	Kind          string                 `json:"kind"`
-	Disabled      bool                   `json:"disabled,omitempty"`
-	MaxWorkers    int                    `json:"maxWorkers,omitempty"`
-	URL           string                 `json:"url,omitempty"`
-	Paths         []string               `json:"paths,omitempty"`
-	NumPartitions int                    `json:"numPartitions,omitempty"`
-	User          string                 `json:"user,omitempty"`
-	Secret        string                 `json:"secret,omitempty"`
-	Attributes    map[string]interface{} `json:"attributes,omitempty"`
+	Class       string            `json:"class"`
+	Kind        string            `json:"kind"`
+	Disabled    bool              `json:"disabled,omitempty"`
+	MaxWorkers  int               `json:"maxWorkers,omitempty"`
+	URL         string            `json:"url,omitempty"`
+	Paths       []string          `json:"paths,omitempty"`
+	User        string            `json:"user,omitempty"`
+	Secret      string            `json:"secret,omitempty"`
+	Partitions  []Partition       `json:"partitions,omitempty"`
+	Annotations map[string]string `json:"annotations,omitempty"`
+
+	// Dealer Information
+	TotalTasks        int `json:"total_tasks,omitempty"`
+	MaxTaskAllocation int `json:"max_task_allocation,omitempty"`
+
+	// General attributes
+	Attributes map[string]interface{} `json:"attributes,omitempty"`
 }
 
-// GetIngresses returns the ingresses of a trigger, if applicable
-func (t *Trigger) GetIngresses() (ingresses map[string]Ingress) {
-	ingresses = map[string]Ingress{}
+// GetTriggersByKind returns a map of triggers by their kind
+func GetTriggersByKind(triggers map[string]Trigger, kind string) map[string]Trigger {
+	matchingTrigger := map[string]Trigger{}
 
-	if t.Kind == "http" {
-		if encodedIngresses, found := t.Attributes["ingresses"]; found {
+	for triggerName, trigger := range triggers {
+		if trigger.Kind == kind {
+			matchingTrigger[triggerName] = trigger
+		}
+	}
+
+	return matchingTrigger
+}
+
+// GetIngressesFromTriggers returns all ingresses from a map of triggers
+func GetIngressesFromTriggers(triggers map[string]Trigger) map[string]Ingress {
+	ingresses := map[string]Ingress{}
+
+	for _, trigger := range GetTriggersByKind(triggers, "http") {
+
+		// if there are attributes
+		if encodedIngresses, found := trigger.Attributes["ingresses"]; found {
 
 			// iterate over the encoded ingresses map and created ingress structures
 			for encodedIngressName, encodedIngress := range encodedIngresses.(map[string]interface{}) {
@@ -80,53 +118,46 @@ func (t *Trigger) GetIngresses() (ingresses map[string]Ingress) {
 		}
 	}
 
-	return
-}
-
-// GetIngressesFromTriggers returns all ingresses from a map of triggers
-func GetIngressesFromTriggers(triggers map[string]Trigger) (ingresses map[string]Ingress) {
-	ingresses = map[string]Ingress{}
-
-	// helper to extend maps
-	extendIngressMap := func(dest, source map[string]Ingress) map[string]Ingress {
-		for name, ingress := range source {
-			dest[name] = ingress
-		}
-
-		return dest
-	}
-
-	for _, trigger := range triggers {
-		ingresses = extendIngressMap(ingresses, trigger.GetIngresses())
-	}
-
 	return ingresses
 }
 
 // Ingress holds configuration for an ingress - an entity that can route HTTP requests
 // to the function
 type Ingress struct {
-	Host  string
-	Paths []string
+	Host  string   `json:"host,omitempty"`
+	Paths []string `json:"paths,omitempty"`
+}
+
+// LoggerSink overrides the default platform configuration for function loggers
+type LoggerSink struct {
+	Level string `json:"level,omitempty"`
+	Sink  string `json:"sink,omitempty"`
+}
+
+// Platform holds platform specific attributes
+type Platform struct {
+	Attributes map[string]interface{} `json:"attributes,omitempty"`
 }
 
 // Build holds all configuration parameters related to building a function
 type Build struct {
-	Path               string            `json:"path,omitempty"`
-	FunctionConfigPath string            `json:"functionConfigPath,omitempty"`
-	OutputType         string            `json:"outputType,omitempty"`
-	NuclioSourceDir    string            `json:"nuclioSourceDir,omitempty"`
-	NuclioSourceURL    string            `json:"nuclioSourceURL,omitempty"`
-	TempDir            string            `json:"tempDir,omitempty"`
-	Registry           string            `json:"registry,omitempty"`
-	ImageName          string            `json:"imageName,omitempty"`
-	ImageVersion       string            `json:"imageVersion,omitempty"`
-	NoBaseImagesPull   bool              `json:"noBaseImagesPull,omitempty"`
-	NoCleanup          bool              `json:"noCleanup,omitempty"`
-	BaseImageName      string            `json:"baseImageName,omitempty"`
-	Commands           []string          `json:"commands,omitempty"`
-	ScriptPaths        []string          `json:"scriptPaths,omitempty"`
-	AddedObjectPaths   map[string]string `json:"addedPaths,omitempty"`
+	Path               string                 `json:"path,omitempty"`
+	FunctionSourceCode string                 `json:"functionSourceCode,omitempty"`
+	FunctionConfigPath string                 `json:"functionConfigPath,omitempty"`
+	TempDir            string                 `json:"tempDir,omitempty"`
+	Registry           string                 `json:"registry,omitempty"`
+	Image              string                 `json:"image,omitempty"`
+	NoBaseImagesPull   bool                   `json:"noBaseImagesPull,omitempty"`
+	NoCache            bool                   `json:"noCache,omitempty"`
+	NoCleanup          bool                   `json:"noCleanup,omitempty"`
+	BaseImage          string                 `json:"baseImage,omitempty"`
+	Commands           []string               `json:"commands,omitempty"`
+	ScriptPaths        []string               `json:"scriptPaths,omitempty"`
+	AddedObjectPaths   map[string]string      `json:"addedPaths,omitempty"`
+	Dependencies       []string               `json:"dependencies,omitempty"`
+	OnbuildImage       string                 `json:"onbuildImage,omitempty"`
+	Offline            bool                   `json:"offline,omitempty"`
+	RuntimeAttributes  map[string]interface{} `json:"offline,omitempty"`
 }
 
 // Spec holds all parameters related to a function's configuration
@@ -138,18 +169,30 @@ type Spec struct {
 	Runtime           string                  `json:"runtime,omitempty"`
 	Env               []v1.EnvVar             `json:"env,omitempty"`
 	Resources         v1.ResourceRequirements `json:"resources,omitempty"`
-	ImageName         string                  `json:"image,omitempty"`
-	HTTPPort          int                     `json:"httpPort,omitempty"`
+	Image             string                  `json:"image,omitempty"`
+	ImageHash         string                  `json:"imageHash,omitempty"`
 	Replicas          int                     `json:"replicas,omitempty"`
 	MinReplicas       int                     `json:"minReplicas,omitempty"`
 	MaxReplicas       int                     `json:"maxReplicas,omitempty"`
+	TargetCPU         int                     `json:"targetCPU,omitempty"`
 	DataBindings      map[string]DataBinding  `json:"dataBindings,omitempty"`
 	Triggers          map[string]Trigger      `json:"triggers,omitempty"`
+	Volumes           []Volume                `json:"volumes,omitempty"`
 	Version           int                     `json:"version,omitempty"`
 	Alias             string                  `json:"alias,omitempty"`
 	Build             Build                   `json:"build,omitempty"`
 	RunRegistry       string                  `json:"runRegistry,omitempty"`
 	RuntimeAttributes map[string]interface{}  `json:"runtimeAttributes,omitempty"`
+	LoggerSinks       []LoggerSink            `json:"loggerSinks,omitempty"`
+	DealerURI         string                  `json:"dealer_uri,omitempty"`
+	Platform          Platform                `json:"platform,omitempty"`
+}
+
+// to appease k8s
+func (s *Spec) DeepCopyInto(out *Spec) {
+
+	// TODO: proper deep copy
+	*out = *s
 }
 
 func (s *Spec) GetRuntimeNameAndVersion() (string, string) {
@@ -165,12 +208,40 @@ func (s *Spec) GetRuntimeNameAndVersion() (string, string) {
 	}
 }
 
+func (s *Spec) GetHTTPPort() int {
+	if s.Triggers == nil {
+		return 0
+	}
+
+	for _, trigger := range s.Triggers {
+		if trigger.Kind == "http" {
+			httpPort, httpPortValid := trigger.Attributes["port"]
+			if httpPortValid {
+				switch typedHTTPPort := httpPort.(type) {
+				case uint64:
+					return int(typedHTTPPort)
+				case float64:
+					return int(typedHTTPPort)
+				case int:
+					return typedHTTPPort
+				}
+			}
+		}
+	}
+
+	return 0
+}
+
 // Meta identifies a function
 type Meta struct {
 	Name        string            `json:"name,omitempty"`
 	Namespace   string            `json:"namespace,omitempty"`
 	Labels      map[string]string `json:"labels,omitempty"`
 	Annotations map[string]string `json:"annotations,omitempty"`
+}
+
+func (m *Meta) GetUniqueID() string {
+	return m.Namespace + ":" + m.Name
 }
 
 // Config holds the configuration of a function - meta and spec
@@ -187,11 +258,38 @@ func NewConfig() *Config {
 		},
 		Spec: Spec{
 			Replicas: 1,
-			Build: Build{
-				NuclioSourceURL: "https://github.com/nuclio/nuclio.git",
-				OutputType:      "docker",
-				ImageVersion:    "latest",
-			},
 		},
 	}
+}
+
+type FunctionState string
+
+const (
+	FunctionStateWaitingForBuild                 FunctionState = "waitingForBuild"
+	FunctionStateBuilding                        FunctionState = "building"
+	FunctionStateWaitingForResourceConfiguration FunctionState = "waitingForResourceConfiguration"
+	FunctionStateConfiguringResources            FunctionState = "configuringResources"
+	FunctionStateReady                           FunctionState = "ready"
+	FunctionStateError                           FunctionState = "error"
+)
+
+// Status holds the status of the function
+type Status struct {
+	State    FunctionState            `json:"state,omitempty"`
+	Message  string                   `json:"message,omitempty"`
+	Logs     []map[string]interface{} `json:"logs,omitempty"`
+	HTTPPort int                      `json:"httpPort,omitempty"`
+}
+
+// to appease k8s
+func (s *Status) DeepCopyInto(out *Status) {
+
+	// TODO: proper deep copy
+	*out = *s
+}
+
+// ConfigWithStatus holds the config and status of a function
+type ConfigWithStatus struct {
+	Config
+	Status Status `json:"status,omitempty"`
 }
