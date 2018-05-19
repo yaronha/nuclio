@@ -1,21 +1,21 @@
 package testlib
 
 import (
-	"github.com/nuclio/nuclio-sdk"
 	"github.com/nuclio/nuclio/cmd/dealer/app"
 	"fmt"
 	"testing"
 	"github.com/nuclio/nuclio/pkg/dealer/jobs"
+	"github.com/nuclio/logger"
 )
 
-func NewTestContext(test *testing.T, dealer *app.Dealer, logger nuclio.Logger)  TestContext {
-	return TestContext{test:test, dealer:dealer, logger:logger.GetChild("test")}
+func NewTestContext(test *testing.T, dealer *app.Dealer, log logger.Logger)  TestContext {
+	return TestContext{test:test, dealer:dealer, logger:log.GetChild("test")}
 }
 
 type TestContext struct {
 	test     *testing.T
 	dealer   *app.Dealer
-	logger   nuclio.Logger
+	logger   logger.Logger
 	unique   int
 }
 
@@ -95,7 +95,7 @@ func (fn *functionBase) ProcSum() {
 		strList = append(strList, str)
 	}
 	procAvg = procSum / len(procList.([]*jobs.ProcessMessage))
-	fn.ctx.logger.InfoWith("Process states: ", "procs", strList)
+	fn.ctx.logger.InfoWith("Process states: ", "procs", strList, "procAvg", procAvg)
 }
 
 func (fn *functionBase) UpdateDeployment(scale int) error {

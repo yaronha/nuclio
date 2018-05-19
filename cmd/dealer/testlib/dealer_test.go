@@ -2,11 +2,11 @@ package testlib
 
 import (
 	"testing"
-	"github.com/nuclio/nuclio-sdk"
-	"github.com/nuclio/nuclio/pkg/zap"
 	"github.com/pkg/errors"
 	"github.com/nuclio/nuclio/pkg/dealer/jobs"
 	"github.com/nuclio/nuclio/cmd/dealer/app"
+	"github.com/nuclio/zap"
+	"github.com/nuclio/logger"
 )
 
 
@@ -41,7 +41,7 @@ func TestDealer_Start(t *testing.T) {
 }
 
 
-func createLogger(verbose bool) (nuclio.Logger, error) {
+func createLogger(verbose bool) (logger.Logger, error) {
 	var loggerLevel nucliozap.Level
 
 	if verbose {
