@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"github.com/nuclio/nuclio/pkg/dealer/jobs"
 	"github.com/pkg/errors"
-	"k8s.io/api/apps/v1beta1"
+	apps_v1 "k8s.io/api/apps/v1"
 	"k8s.io/api/core/v1"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -18,7 +18,7 @@ import (
 	"github.com/nuclio/logger"
 )
 
-const NUCLIO_SELECTOR = "serverless=test"
+const NUCLIO_SELECTOR = "nuclio.io/class=function"
 
 func GetClientConfig(kubeconfig string) (*rest.Config, error) {
 	if kubeconfig != "" {
@@ -110,8 +110,8 @@ func NewPodWatcher(client *kubernetes.Clientset, managerContext *jobs.ManagerCon
 func getProcStruct(pod *v1.Pod) *jobs.BaseProcess {
 	proc := jobs.BaseProcess{
 		Name: pod.Name, Namespace: pod.Namespace,
-		Function: pod.Labels["name"],
-		Version:  pod.Labels["version"],
+		Function: pod.Labels["nuclio.io/function-name"],
+		Version:  pod.Labels["nuclio.io/function-version"],
 		Alias:    pod.Labels["alias"],
 		IP:       pod.Status.PodIP,
 	}
@@ -171,22 +171,22 @@ func NewDeployWatcher(client *kubernetes.Clientset, managerContext *jobs.Manager
 
 	_, controller := cache.NewInformer(
 		listWatch,
-		&v1beta1.Deployment{},
+		&apps_v1.Deployment{},
 		time.Minute*10,
 		cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
-				dep := getDeployStruct(obj.(*v1beta1.Deployment))
+				dep := getDeployStruct(obj.(*apps_v1.Deployment))
 				newWatcher.dispatchChange(&jobs.RequestMessage{
 					Type: jobs.RequestTypeDeployUpdate, Object: dep})
 			},
 			DeleteFunc: func(obj interface{}) {
-				dep := getDeployStruct(obj.(*v1beta1.Deployment))
+				dep := getDeployStruct(obj.(*apps_v1.Deployment))
 				newWatcher.dispatchChange(&jobs.RequestMessage{
 					Type: jobs.RequestTypeDeployRemove, Object: dep})
 			},
 			UpdateFunc: func(oldObj, newObj interface{}) {
-				oldDep := oldObj.(*v1beta1.Deployment)
-				newDep := newObj.(*v1beta1.Deployment)
+				oldDep := oldObj.(*apps_v1.Deployment)
+				newDep := newObj.(*apps_v1.Deployment)
 				if oldDep.ObjectMeta.Generation != newDep.ObjectMeta.Generation {
 					newWatcher.dispatchChange(&jobs.RequestMessage{
 						Type: jobs.RequestTypeDeployUpdate, Object: getDeployStruct(newDep)})
@@ -201,11 +201,11 @@ func NewDeployWatcher(client *kubernetes.Clientset, managerContext *jobs.Manager
 	return nil
 }
 
-func getDeployStruct(deploy *v1beta1.Deployment) *jobs.DeploymentSpec {
+func getDeployStruct(deploy *apps_v1.Deployment) *jobs.DeploymentSpec {
 	depBase := jobs.BaseDeployment{
 		Name: deploy.Name, Namespace: deploy.Namespace,
-		Function:     deploy.Labels["name"],
-		Version:      deploy.Labels["version"],
+		Function:     deploy.Labels["nuclio.io/function-name"],
+		Version:      deploy.Labels["nuclio.io/function-version"],
 		Alias:        deploy.Labels["alias"],
 		ExpectedProc: int(*deploy.Spec.Replicas),
 	}
@@ -250,7 +250,7 @@ func ListDeployments(client *kubernetes.Clientset, logger logger.Logger, namespa
 		LabelSelector: NUCLIO_SELECTOR,
 	}
 
-	result, err := client.AppsV1beta1().Deployments(namespace).List(listOptions)
+	result, err := client.AppsV1().Deployments(namespace).List(listOptions)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to list deployments")
 	}

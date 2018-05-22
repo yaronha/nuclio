@@ -33,8 +33,8 @@ import (
 
 func run() error {
 	verbose := flag.Bool("d", true, "Verbose")
-	//kubeconf := flag.String("k", "config", "Path to a kube config. Only required if out-of-cluster.")
-	kubeconf := flag.String("k", "", "Path to a kube config. Only required if out-of-cluster.")
+	kubeconf := flag.String("k", "config", "Path to a kube config. Only required if out-of-cluster.")
+	//kubeconf := flag.String("k", "", "Path to a kube config. Only required if out-of-cluster.")
 	namespace := flag.String("n", "", "Namespace")
 	nopush := flag.Bool("np", false, "Disable push updates to process")
 	spath := flag.String("f", "", "job files dir")

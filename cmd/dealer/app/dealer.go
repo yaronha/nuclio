@@ -208,7 +208,7 @@ func (dl *Dealer) Start() error {
 						Err: nil, Object: depList}
 
 				case jobs.RequestTypeDeployRemove:
-					dep := req.Object.(*jobs.Deployment)
+					dep := req.Object.(*jobs.DeploymentSpec)
 					err := dl.DeployMap.RemoveDeployment(dep.Namespace, dep.Function, dep.Version)
 					if req.ReturnChan != nil {
 						req.ReturnChan <- &jobs.RespChanType{Err: err}
