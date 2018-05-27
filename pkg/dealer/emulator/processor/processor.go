@@ -20,20 +20,20 @@ import (
 	"fmt"
 	"github.com/go-chi/chi"
 	"github.com/go-chi/render"
-	"github.com/nuclio/nuclio-sdk"
 	"github.com/nuclio/nuclio/pkg/dealer/jobs"
 	"net/http"
 	"time"
+	"github.com/nuclio/logger"
 )
 
-func NewProcessEmulator(logger nuclio.Logger, proc *jobs.ProcessMessage) (ProcessEmulator, error) {
+func NewProcessEmulator(logger logger.Logger, proc *jobs.ProcessMessage) (ProcessEmulator, error) {
 	newEmulator := ProcessEmulator{logger: logger}
 	newEmulator.Proc = NewLocalProcess(logger, proc)
 	return newEmulator, nil
 }
 
 type ProcessEmulator struct {
-	logger nuclio.Logger
+	logger logger.Logger
 	port   int
 	Proc   *LocalProcess
 }
@@ -85,7 +85,7 @@ func (p *ProcessEmulator) eventUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 
-func NewLocalProcess(logger nuclio.Logger, proc *jobs.ProcessMessage) *LocalProcess {
+func NewLocalProcess(logger logger.Logger, proc *jobs.ProcessMessage) *LocalProcess {
 	localProc := &LocalProcess{BaseProcess: proc.BaseProcess}
 	localProc.jobs = map[string]jobs.JobShort{}
 	localProc.State = jobs.ProcessStateReady
@@ -94,7 +94,7 @@ func NewLocalProcess(logger nuclio.Logger, proc *jobs.ProcessMessage) *LocalProc
 
 type LocalProcess struct {
 	jobs.BaseProcess
-	logger      nuclio.Logger
+	logger      logger.Logger
 	LastUpdate  time.Time
 	jobs        map[string]jobs.JobShort
 }

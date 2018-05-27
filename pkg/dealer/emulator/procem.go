@@ -20,16 +20,16 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/nuclio/nuclio-sdk"
 	"github.com/nuclio/nuclio/pkg/dealer/client"
 	"github.com/nuclio/nuclio/pkg/dealer/emulator/processor"
 	"github.com/nuclio/nuclio/pkg/dealer/jobs"
-	"github.com/nuclio/nuclio/pkg/zap"
 	"github.com/pkg/errors"
 	"net"
 	"os"
 	"os/signal"
 	"syscall"
+	"github.com/nuclio/zap"
+	"github.com/nuclio/logger"
 )
 
 func main() {
@@ -114,7 +114,7 @@ func getMyIP() (string, error) {
 	return fmt.Sprintf("%s", localAddr.IP), nil
 }
 
-func createLogger(verbose bool) (nuclio.Logger, error) {
+func createLogger(verbose bool) (logger.Logger, error) {
 	var loggerLevel nucliozap.Level
 
 	if verbose {
