@@ -1,7 +1,6 @@
 package starter
 
 import (
-	"github.com/nuclio/nuclio-sdk"
 	"github.com/nuclio/nuclio/pkg/starter/core"
 	"github.com/nuclio/nuclio/pkg/starter/kube"
 	"github.com/pkg/errors"
@@ -10,11 +9,12 @@ import (
 	"github.com/valyala/fasthttp"
 	"bytes"
 	"fmt"
+	"github.com/nuclio/logger"
 )
 
 const LISETEN_ON_PORT = "30088"
 
-func NewStarter(logger nuclio.Logger, config StarterConfig) (*Starter, error) {
+func NewStarter(logger logger.Logger, config StarterConfig) (*Starter, error) {
 	newStarter := Starter{logger:logger}
 	newStarter.RequestsChannel = make(chan *core.AsyncRequests, 100)
 	newStarter.config = &config
@@ -30,7 +30,7 @@ type StarterConfig struct {
 }
 
 type Starter struct {
-	logger              nuclio.Logger
+	logger              logger.Logger
 	config              *StarterConfig
 	funcDB              *core.FuncDirectory
 	RequestsChannel     chan *core.AsyncRequests

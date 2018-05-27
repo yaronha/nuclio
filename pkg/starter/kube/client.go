@@ -1,7 +1,6 @@
 package kube
 
 import (
-	"github.com/nuclio/nuclio-sdk"
 	"github.com/nuclio/nuclio/pkg/platform/kube/functioncr"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -14,11 +13,12 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/api/core/v1"
+	"github.com/nuclio/logger"
 )
 
 const NUCLIO_SELECTOR = "serverless=nuclio"
 
-func NewKubeClient(logger nuclio.Logger, kubeconf, namespace string, reqChannel chan *core.AsyncRequests) (*kubeClient, error) {
+func NewKubeClient(logger logger.Logger, kubeconf, namespace string, reqChannel chan *core.AsyncRequests) (*kubeClient, error) {
 	newClient := &kubeClient{logger:logger, namespace:namespace, kubeconf:kubeconf}
 	newClient.reqChannel = reqChannel
 
@@ -36,7 +36,7 @@ func NewKubeClient(logger nuclio.Logger, kubeconf, namespace string, reqChannel 
 type kubeClient struct {
 	Function     *functionIfc
 
-	logger       nuclio.Logger
+	logger       logger.Logger
 	kubeClient   *kubernetes.Clientset
 	restConfig   *rest.Config
 	functionCR   *functioncr.Client
@@ -87,7 +87,7 @@ func (kc *kubeClient) processEP(ep *v1.Endpoints) {
 
 func (kc *kubeClient) NewEPWatcher() error {
 
-	logger := kc.logger.GetChild("epWatcher").(nuclio.Logger)
+	logger := kc.logger.GetChild("epWatcher").(logger.Logger)
 	logger.Debug("Watching for Endpoint changes")
 
 	opts := meta_v1.ListOptions{

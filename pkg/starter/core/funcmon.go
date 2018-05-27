@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"github.com/valyala/fasthttp"
 	"strings"
-	"github.com/nuclio/nuclio-sdk"
+	"github.com/nuclio/logger"
 )
 
-func NewFuncDirectory(logger nuclio.Logger) *FuncDirectory {
+func NewFuncDirectory(logger logger.Logger) *FuncDirectory {
 	newDir := FuncDirectory{logger: logger.GetChild("funcdict")}
 	newDir.functions = map[string]*FunctionRecord{}
 	newDir.Radix = NewPathRadix(logger)
@@ -17,7 +17,7 @@ func NewFuncDirectory(logger nuclio.Logger) *FuncDirectory {
 type FuncDirectory struct {
 	functions  map[string]*FunctionRecord
 	Radix      *PathRadix
-	logger     nuclio.Logger
+	logger     logger.Logger
 }
 
 func (fd *FuncDirectory) GetFunctions() map[string]*FunctionRecord {
