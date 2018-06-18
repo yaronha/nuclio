@@ -33,7 +33,7 @@ const (
 	ProcessStateReady    ProcessState = 1
 	ProcessStateNotReady ProcessState = 2
 	ProcessStateFailed   ProcessState = 3
-	ProcessStateDelete   ProcessState = 4
+	ProcessStateDeleted  ProcessState = 4
 )
 
 const DEFAULT_PORT = 8077
@@ -152,6 +152,7 @@ func (p *Process) Remove() error {
 // Request to stop all process tasks
 func (p *Process) ClearTasks() error {
 	hadTasks := false
+	p.State = ProcessStateDeleted
 
 	for _, job := range p.jobs {
 		for _, task := range job.tasks {

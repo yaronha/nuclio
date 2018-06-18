@@ -57,7 +57,7 @@ func (d *Deployment) RemoveProcess(proc *Process) error {
 		return errors.Wrap(err, "Failed to remove process")
 	}
 
-	d.procs[proc.Name].Remove()
+	//d.procs[proc.Name].Remove()
 	delete(d.procs, proc.Name)
 
 	if len(d.procs) <= d.ExpectedProc {

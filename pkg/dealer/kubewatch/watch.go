@@ -80,7 +80,7 @@ func NewPodWatcher(client *kubernetes.Clientset, managerContext *jobs.ManagerCon
 			},
 			DeleteFunc: func(obj interface{}) {
 				proc := getProcStruct(obj.(*v1.Pod))
-				proc.State = jobs.ProcessStateDelete
+				proc.State = jobs.ProcessStateDeleted
 				newWatcher.dispatchChange(&jobs.RequestMessage{
 					Name: proc.Name, Namespace: proc.Namespace,
 					Type: jobs.RequestTypeProcDel, Object: proc})

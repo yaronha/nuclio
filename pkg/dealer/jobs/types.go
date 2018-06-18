@@ -30,11 +30,13 @@ type ManagerContext struct {
 	Client            *client.AsyncClient
 	JobStore          JobStore
 	DisablePush       bool
+	SendStopMessage   bool
 }
 
 type ManagerContextConfig struct {
-	DisablePush bool
-	StorePath   string
+	DisablePush       bool
+	StorePath         string
+	SendStopMessage   bool
 }
 
 func NewManagerContext(log logger.Logger, asyncClient *client.AsyncClient, config *ManagerContextConfig) *ManagerContext {
@@ -45,6 +47,7 @@ func NewManagerContext(log logger.Logger, asyncClient *client.AsyncClient, confi
 		AsyncTasksChannel: make(chan *asyncflow.AsyncWorkflowTask, 100),
 		Client:            asyncClient,
 		DisablePush:       config.DisablePush,
+		SendStopMessage:   config.SendStopMessage,
 	}
 
 	newContext.JobStore = NewJobFileStore(config.StorePath, log)

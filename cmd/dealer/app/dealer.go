@@ -518,7 +518,7 @@ func (dl *Dealer) updateProcess(procMsg *jobs.ProcessMessage, checkTasks bool, i
 	key := jobs.ProcessKey(procMsg.Name, procMsg.Namespace)
 	proc, ok := dl.Processes[key]
 
-	if !ok {
+	if !ok || proc.State == jobs.ProcessStateDeleted {
 
 		if procMsg.State != jobs.ProcessStateReady {
 			dl.Ctx.Logger.DebugWith("process update, new and state is not ready", "process", procMsg)
